@@ -1574,8 +1574,35 @@ async def create_slot(payload: SlotPayload, db: AsyncSession = Depends(get_db)) 
 
 @router.delete("/slots/{slot_id}")
 async def delete_slot(slot_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    await db.execute(text("DELETE FROM school.timetable_slots WHERE id = CAST(:id AS uuid)"), {"id": slot_id})
-    await audit_event(db, "delete_slot", "school_timetable_slot", slot_id)
+    slot_result = await db.execute(text("""
+        SELECT
+            slot.id,
+            slot.timetable_version_id,
+            tv.name_ar AS timetable_name_ar,
+            tv.status AS timetable_status,
+            tv.is_current
+        FROM school.timetable_slots slot
+        JOIN school.timetable_versions tv ON tv.id = slot.timetable_version_id
+        WHERE slot.id = CAST(:slot_id AS uuid)
+        LIMIT 1
+    """), {"slot_id": slot_id})
+    slot_row = slot_result.first()
+
+    if slot_row is None:
+        raise HTTPException(status_code=404, detail="الحصة غير موجودة")
+
+    slot_data = dict(slot_row._mapping)
+    if slot_data["timetable_status"] in {"approved", "published"}:
+        raise HTTPException(
+            status_code=409,
+            detail="لا يمكن حذف حصة من نسخة جدول معتمدة أو منشورة. أرشف النسخة أو أنشئ نسخة مسودة للتعديل.",
+        )
+
+    await db.execute(
+        text("DELETE FROM school.timetable_slots WHERE id = CAST(:slot_id AS uuid)"),
+        {"slot_id": slot_id},
+    )
+    await audit_event(db, "delete_slot", "school_timetable_slot", slot_id, json_safe(slot_data))
     await db.commit()
     return {"deleted": True, "id": slot_id}
 
