@@ -107,6 +107,10 @@ export default function TimetableStudioPage() {
   const [constraints, setConstraints] = useState<Row[]>([]);
 
   const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [compareBaseVersionId, setCompareBaseVersionId] = useState("");
+  const [compareTargetVersionId, setCompareTargetVersionId] = useState("");
+  const [compareResult, setCompareResult] = useState<Row | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -304,7 +308,25 @@ export default function TimetableStudioPage() {
     );
   }
 
-  async function exportCsv() {
+  
+  async function runVersionCompare() {
+    if (!compareBaseVersionId || !compareTargetVersionId) {
+      alert("اختر نسخة الأساس ونسخة المقارنة");
+      return;
+    }
+
+    if (compareBaseVersionId === compareTargetVersionId) {
+      alert("لا يمكن مقارنة النسخة بنفسها");
+      return;
+    }
+
+    const result = await apiGet(
+      `versions/compare?base_version_id=${encodeURIComponent(compareBaseVersionId)}&target_version_id=${encodeURIComponent(compareTargetVersionId)}`
+    );
+    setCompareResult(result);
+  }
+
+async function exportCsv() {
     return action("تصدير CSV", async () => {
       const result = await apiPost("exports/csv", { version_id: currentVersion?.id || null });
       const blob = new Blob([result.csv_text], { type: result.content_type || "text/csv;charset=utf-8" });
@@ -483,7 +505,131 @@ export default function TimetableStudioPage() {
         </div>
       </section>
 
-      <section className="surface section-pad mt studio-board">
+      
+      <section className="surface section-pad mt version-compare-panel">
+        <div className="studio-toolbar">
+          <div>
+            <h2>مقارنة نسختين من الجدول</h2>
+            <p className="muted">
+              قارن بين نسخة أساس ونسخة هدف لمعرفة الحصص المضافة، المحذوفة، والمتغيرة قبل الاعتماد أو النشر.
+            </p>
+          </div>
+          {compareResult?.summary && (
+            <span className="badge">
+              فروقات: {compareResult.summary.delta_count}
+            </span>
+          )}
+        </div>
+
+        <div className="grid form-grid mt-small">
+          <select
+            className="input"
+            value={compareBaseVersionId}
+            onChange={(event) => setCompareBaseVersionId(event.target.value)}
+          >
+            <option value="">اختر نسخة الأساس</option>
+            {versions.map((version) => (
+              <option key={version.id} value={version.id}>
+                {version.name_ar} · {version.status} · {version.is_current ? "حالية" : "غير حالية"}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="input"
+            value={compareTargetVersionId}
+            onChange={(event) => setCompareTargetVersionId(event.target.value)}
+          >
+            <option value="">اختر نسخة المقارنة</option>
+            {versions.map((version) => (
+              <option key={version.id} value={version.id}>
+                {version.name_ar} · {version.status} · {version.is_current ? "حالية" : "غير حالية"}
+              </option>
+            ))}
+          </select>
+
+          <button
+            className="btn"
+            disabled={busy || !compareBaseVersionId || !compareTargetVersionId || compareBaseVersionId === compareTargetVersionId}
+            onClick={runVersionCompare}
+          >
+            مقارنة النسختين
+          </button>
+        </div>
+
+        {compareResult?.summary && (
+          <>
+            <div className="compare-summary mt">
+              <div className="metric">
+                <span>حصص الأساس</span>
+                <strong>{compareResult.summary.base_slots}</strong>
+              </div>
+              <div className="metric">
+                <span>حصص المقارنة</span>
+                <strong>{compareResult.summary.target_slots}</strong>
+              </div>
+              <div className="metric">
+                <span>مضافة</span>
+                <strong>{compareResult.summary.added_count}</strong>
+              </div>
+              <div className="metric">
+                <span>محذوفة</span>
+                <strong>{compareResult.summary.removed_count}</strong>
+              </div>
+              <div className="metric">
+                <span>متغيرة</span>
+                <strong>{compareResult.summary.changed_count}</strong>
+              </div>
+              <div className="metric">
+                <span>بدون تغيير</span>
+                <strong>{compareResult.summary.unchanged_count}</strong>
+              </div>
+            </div>
+
+            <div className="compare-columns mt">
+              <div className="compare-card added">
+                <h3>الحصص المضافة</h3>
+                {(compareResult.added || []).slice(0, 12).map((slot: Row) => (
+                  <div className="compare-row" key={slot.id}>
+                    <strong>{slot.class_name_ar || slot.class_code}</strong>
+                    <span>{slot.day_name_ar} · {slot.period_name_ar}</span>
+                    <small>{slot.subject_name_ar} · {slot.teacher_name_ar || "بدون مدرس"} · {slot.room_name_ar || "بدون قاعة"}</small>
+                  </div>
+                ))}
+                {(!compareResult.added || compareResult.added.length === 0) && <p className="muted">لا توجد حصص مضافة.</p>}
+              </div>
+
+              <div className="compare-card removed">
+                <h3>الحصص المحذوفة</h3>
+                {(compareResult.removed || []).slice(0, 12).map((slot: Row) => (
+                  <div className="compare-row" key={slot.id}>
+                    <strong>{slot.class_name_ar || slot.class_code}</strong>
+                    <span>{slot.day_name_ar} · {slot.period_name_ar}</span>
+                    <small>{slot.subject_name_ar} · {slot.teacher_name_ar || "بدون مدرس"} · {slot.room_name_ar || "بدون قاعة"}</small>
+                  </div>
+                ))}
+                {(!compareResult.removed || compareResult.removed.length === 0) && <p className="muted">لا توجد حصص محذوفة.</p>}
+              </div>
+
+              <div className="compare-card changed">
+                <h3>الحصص المتغيرة</h3>
+                {(compareResult.changed || []).slice(0, 12).map((item: Row) => (
+                  <div className="compare-row" key={item.slot_key}>
+                    <strong>{item.target?.class_name_ar || item.base?.class_name_ar || item.slot_key}</strong>
+                    <span>{item.target?.day_name_ar || item.base?.day_name_ar} · {item.target?.period_name_ar || item.base?.period_name_ar}</span>
+                    <small>
+                      {Object.keys(item.changes || {}).join(" / ") || "تغيير غير محدد"}
+                    </small>
+                  </div>
+                ))}
+                {(!compareResult.changed || compareResult.changed.length === 0) && <p className="muted">لا توجد حصص متغيرة.</p>}
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
+<section className="surface section-pad mt studio-board">
         <div className="studio-toolbar">
           <div>
             <h2>الشبكة المرئية</h2>
