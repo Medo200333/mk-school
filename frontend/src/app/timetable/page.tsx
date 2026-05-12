@@ -306,7 +306,7 @@ export default function TimetableStudioPage() {
 
   async function exportCsv() {
     return action("تصدير CSV", async () => {
-      const result = await apiPost("exports/csv");
+      const result = await apiPost("exports/csv", { version_id: currentVersion?.id || null });
       const blob = new Blob([result.csv_text], { type: result.content_type || "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");

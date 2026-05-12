@@ -206,13 +206,25 @@ async def periods(db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
 
 
 @router.get("/grid")
-async def grid(db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
-    result = await db.execute(text("""
-        SELECT *
-        FROM school.vw_school_timetable_grid
-        ORDER BY day_order, period_no, class_code
-        LIMIT 2000
-    """))
+async def grid(
+    version_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    if version_id:
+        result = await db.execute(text("""
+            SELECT *
+            FROM school.vw_school_timetable_grid
+            WHERE timetable_version_id = CAST(:version_id AS uuid)
+            ORDER BY day_order, period_no, class_code
+            LIMIT 2000
+        """), {"version_id": version_id})
+    else:
+        result = await db.execute(text("""
+            SELECT *
+            FROM school.vw_school_timetable_grid
+            ORDER BY day_order, period_no, class_code
+            LIMIT 2000
+        """))
     return rows(result)
 
 
@@ -922,6 +934,10 @@ class VersionPayload(BaseModel):
     is_current: bool = True
 
 
+class ExportCsvPayload(BaseModel):
+    version_id: str | None = None
+
+
 @router.post("/versions")
 async def create_version(payload: VersionPayload, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     if payload.is_current:
@@ -1423,14 +1439,20 @@ async def delete_slot(slot_id: str, db: AsyncSession = Depends(get_db)) -> dict[
 
 
 @router.post("/exports/csv")
-async def export_csv(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
-    grid_rows = await grid(db)
+async def export_csv(
+    payload: ExportCsvPayload | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    requested_version_id = payload.version_id if payload else None
+    grid_rows = await grid(version_id=requested_version_id, db=db)
+
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
         fieldnames=["day", "period", "class", "subject", "teacher", "room"],
     )
     writer.writeheader()
+
     for item in grid_rows:
         writer.writerow({
             "day": item.get("day_name_ar") or "",
@@ -1441,18 +1463,33 @@ async def export_csv(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
             "room": item.get("room_name_ar") or "",
         })
 
-    version_id = str(grid_rows[0]["timetable_version_id"]) if grid_rows else None
+    version_id = requested_version_id or (str(grid_rows[0]["timetable_version_id"]) if grid_rows else None)
+
     job_result = await db.execute(text("""
         INSERT INTO school.timetable_export_jobs(timetable_version_id, export_type, report_scope, payload)
         VALUES (CAST(:version_id AS uuid), 'csv', 'grid', CAST(:payload AS jsonb))
         RETURNING id
     """), {
         "version_id": version_id,
-        "payload": json.dumps({"rows_count": len(grid_rows)}, ensure_ascii=False),
+        "payload": json.dumps({
+            "rows_count": len(grid_rows),
+            "version_id": version_id,
+            "scope": "selected_version" if version_id else "all_versions",
+        }, ensure_ascii=False),
     })
+
     job_id = str(job_result.one()._mapping["id"])
-    await audit_event(db, "export_csv", "school_timetable_export_job", job_id, {"rows_count": len(grid_rows)})
+
+    await audit_event(
+        db,
+        "export_csv",
+        "school_timetable_export_job",
+        job_id,
+        {"rows_count": len(grid_rows), "version_id": version_id},
+    )
+
     await db.commit()
+
     return {
         "job_id": job_id,
         "file_name": "school-timetable.csv",
