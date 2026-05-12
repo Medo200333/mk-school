@@ -1353,6 +1353,32 @@ async def run_generation(
 
 @router.post("/versions/{version_id}/approve")
 async def approve_version(version_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    version_result = await db.execute(
+        text("""
+            SELECT
+                tv.id,
+                tv.name_ar,
+                tv.status,
+                tv.effective_from,
+                tv.effective_to,
+                tv.is_current,
+                tv.created_at,
+                count(ts.id) AS slots_count
+            FROM school.timetable_versions tv
+            LEFT JOIN school.timetable_slots ts ON ts.timetable_version_id = tv.id
+            WHERE tv.id = CAST(:version_id AS uuid)
+            GROUP BY tv.id, tv.name_ar, tv.status, tv.effective_from, tv.effective_to, tv.is_current, tv.created_at
+        """),
+        {"version_id": version_id},
+    )
+    version_row = version_result.first()
+    if version_row is None:
+        raise HTTPException(status_code=404, detail="نسخة الجدول غير موجودة")
+
+    version_data = dict(version_row._mapping)
+    if int(version_data["slots_count"]) < 1:
+        raise HTTPException(status_code=409, detail="لا يمكن اعتماد نسخة جدول فارغة بدون حصص")
+
     conflicts_result = await db.execute(
         text("""
             SELECT count(*)
@@ -1375,11 +1401,7 @@ async def approve_version(version_id: str, db: AsyncSession = Depends(get_db)) -
         """),
         {"version_id": version_id},
     )
-    row = result.first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="نسخة الجدول غير موجودة")
-
-    data = dict(row._mapping)
+    data = dict(result.one()._mapping)
     await audit_event(db, "approve_version", "school_timetable_version", version_id, data)
     await db.commit()
     return data
@@ -1408,6 +1430,36 @@ async def archive_version(version_id: str, db: AsyncSession = Depends(get_db)) -
 
 @router.post("/versions/{version_id}/publish")
 async def publish_version(version_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+    version_result = await db.execute(
+        text("""
+            SELECT
+                tv.id,
+                tv.name_ar,
+                tv.status,
+                tv.effective_from,
+                tv.effective_to,
+                tv.is_current,
+                tv.created_at,
+                count(ts.id) AS slots_count
+            FROM school.timetable_versions tv
+            LEFT JOIN school.timetable_slots ts ON ts.timetable_version_id = tv.id
+            WHERE tv.id = CAST(:version_id AS uuid)
+            GROUP BY tv.id, tv.name_ar, tv.status, tv.effective_from, tv.effective_to, tv.is_current, tv.created_at
+        """),
+        {"version_id": version_id},
+    )
+    version_row = version_result.first()
+    if version_row is None:
+        raise HTTPException(status_code=404, detail="نسخة الجدول غير موجودة")
+
+    version_data = dict(version_row._mapping)
+
+    if version_data["status"] != "approved":
+        raise HTTPException(status_code=409, detail="لا يمكن نشر نسخة جدول قبل اعتمادها أولًا")
+
+    if int(version_data["slots_count"]) < 1:
+        raise HTTPException(status_code=409, detail="لا يمكن نشر نسخة جدول فارغة بدون حصص")
+
     conflicts_result = await db.execute(
         text("""
             SELECT count(*)
@@ -1431,11 +1483,7 @@ async def publish_version(version_id: str, db: AsyncSession = Depends(get_db)) -
         """),
         {"version_id": version_id},
     )
-    row = result.first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="نسخة الجدول غير موجودة")
-
-    data = dict(row._mapping)
+    data = dict(result.one()._mapping)
     await audit_event(db, "publish_version", "school_timetable_version", version_id, data)
     await db.commit()
     return data
