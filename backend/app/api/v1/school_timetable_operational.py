@@ -938,6 +938,148 @@ class ExportCsvPayload(BaseModel):
     version_id: str | None = None
 
 
+
+
+@router.get("/versions/compare")
+async def compare_versions(
+    base_version_id: str,
+    target_version_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    if base_version_id == target_version_id:
+        raise HTTPException(status_code=400, detail="اختر نسختين مختلفتين للمقارنة")
+
+    versions_result = await db.execute(text("""
+        SELECT id, name_ar, status, is_current, created_at
+        FROM school.timetable_versions
+        WHERE id IN (CAST(:base_version_id AS uuid), CAST(:target_version_id AS uuid))
+    """), {
+        "base_version_id": base_version_id,
+        "target_version_id": target_version_id,
+    })
+    versions = {str(row._mapping["id"]): dict(row._mapping) for row in versions_result}
+
+    if base_version_id not in versions:
+        raise HTTPException(status_code=404, detail="نسخة الأساس غير موجودة")
+    if target_version_id not in versions:
+        raise HTTPException(status_code=404, detail="نسخة المقارنة غير موجودة")
+
+    rows_result = await db.execute(text("""
+        SELECT
+            timetable_version_id,
+            id,
+            class_code,
+            class_name_ar,
+            week_day_id,
+            day_name_ar,
+            day_order,
+            period_no,
+            period_name_ar,
+            subject_name_ar,
+            teacher_name_ar,
+            room_name_ar,
+            notes
+        FROM school.vw_school_timetable_grid
+        WHERE timetable_version_id IN (CAST(:base_version_id AS uuid), CAST(:target_version_id AS uuid))
+        ORDER BY day_order, period_no, class_code, subject_name_ar
+    """), {
+        "base_version_id": base_version_id,
+        "target_version_id": target_version_id,
+    })
+
+    base_map: dict[str, dict[str, Any]] = {}
+    target_map: dict[str, dict[str, Any]] = {}
+
+    def signature(row: dict[str, Any]) -> str:
+        return "|".join([
+            str(row.get("class_code") or ""),
+            str(row.get("week_day_id") or ""),
+            str(row.get("period_no") or ""),
+        ])
+
+    for row_obj in rows_result:
+        row = dict(row_obj._mapping)
+        key = signature(row)
+        if str(row["timetable_version_id"]) == base_version_id:
+            base_map[key] = row
+        else:
+            target_map[key] = row
+
+    added: list[dict[str, Any]] = []
+    removed: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+    unchanged: list[dict[str, Any]] = []
+
+    all_keys = sorted(set(base_map) | set(target_map))
+
+    for key in all_keys:
+        base = base_map.get(key)
+        target = target_map.get(key)
+
+        if base is None and target is not None:
+            added.append(target)
+            continue
+
+        if target is None and base is not None:
+            removed.append(base)
+            continue
+
+        if base is None or target is None:
+            continue
+
+        field_changes: dict[str, dict[str, Any]] = {}
+        for field in ["subject_name_ar", "teacher_name_ar", "room_name_ar", "notes"]:
+            if (base.get(field) or "") != (target.get(field) or ""):
+                field_changes[field] = {
+                    "from": base.get(field),
+                    "to": target.get(field),
+                }
+
+        if field_changes:
+            changed.append({
+                "slot_key": key,
+                "base": base,
+                "target": target,
+                "changes": field_changes,
+            })
+        else:
+            unchanged.append(target)
+
+    summary = {
+        "base_slots": len(base_map),
+        "target_slots": len(target_map),
+        "added_count": len(added),
+        "removed_count": len(removed),
+        "changed_count": len(changed),
+        "unchanged_count": len(unchanged),
+        "delta_count": len(added) + len(removed) + len(changed),
+    }
+
+    result = {
+        "base_version": json_safe(versions[base_version_id]),
+        "target_version": json_safe(versions[target_version_id]),
+        "summary": summary,
+        "added": json_safe(added),
+        "removed": json_safe(removed),
+        "changed": json_safe(changed),
+        "unchanged": json_safe(unchanged[:200]),
+    }
+
+    await audit_event(
+        db,
+        "compare_versions",
+        "school_timetable_version_compare",
+        target_version_id,
+        {
+            "base_version_id": base_version_id,
+            "target_version_id": target_version_id,
+            "summary": summary,
+        },
+    )
+    await db.commit()
+    return result
+
+
 @router.post("/versions")
 async def create_version(payload: VersionPayload, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     if payload.is_current:
