@@ -1475,6 +1475,24 @@ async def create_slot(payload: SlotPayload, db: AsyncSession = Depends(get_db)) 
         else:
             version_id = str(row._mapping["id"])
 
+    version_status_result = await db.execute(text("""
+        SELECT id, name_ar, status, is_current
+        FROM school.timetable_versions
+        WHERE id = CAST(:version_id AS uuid)
+        LIMIT 1
+    """), {"version_id": version_id})
+    version_status_row = version_status_result.first()
+
+    if version_status_row is None:
+        raise HTTPException(status_code=404, detail="نسخة الجدول غير موجودة")
+
+    version_data = dict(version_status_row._mapping)
+    if version_data["status"] in {"approved", "published"}:
+        raise HTTPException(
+            status_code=409,
+            detail="لا يمكن إضافة حصة داخل نسخة جدول معتمدة أو منشورة. أنشئ نسخة مسودة للتعديل.",
+        )
+
     # تعارض المدرس
     if payload.teacher_id:
         conflict = await db.execute(text("""
