@@ -1,0 +1,33 @@
+const SERVER_API_BASE_URL =
+  process.env.API_INTERNAL_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  "http://localhost:8100";
+
+const BROWSER_API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8100";
+
+function apiBaseUrl() {
+  return typeof window === "undefined" ? SERVER_API_BASE_URL : BROWSER_API_BASE_URL;
+}
+
+export async function apiGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${apiBaseUrl()}${path}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
+  return res.json();
+}
+
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${apiBaseUrl()}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store"
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`POST ${path} failed: ${res.status} ${text}`);
+  }
+
+  return res.json();
+}

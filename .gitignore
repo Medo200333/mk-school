@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Frontend generated/dependencies
+frontend/node_modules/
+frontend/.next/
+frontend/.pnpm-store/
+frontend/*.tsbuildinfo
+frontend/node_modules.broken-permissions*/
+frontend/.next.broken-permissions*/
+
+# Large/reference files
+external/
+*.zip
+*.rar
+*.docx
+
+# Local env/logs
+frontend/.env.local
+*.log
+mk_docker_logs.txt

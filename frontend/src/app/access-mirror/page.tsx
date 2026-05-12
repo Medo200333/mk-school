@@ -1,0 +1,1 @@
+export default function Page(){return <main dir="rtl" style={{padding:40,background:"#080604",color:"white",minHeight:"100vh",fontFamily:"Arial"}}><h1>Access Mirror</h1><p>صفحة Access Mirror رجعت للعمل.</p></main>}

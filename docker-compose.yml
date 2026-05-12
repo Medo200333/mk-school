@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mk_school_postgres
+    environment:
+      POSTGRES_DB: mk_school
+      POSTGRES_USER: mk_user
+      POSTGRES_PASSWORD: mk_password
+    ports:
+      - "55433:5432"
+    volumes:
+      - mk_postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    image: redis:7-alpine
+    container_name: mk_school_redis
+    ports:
+      - "56379:6379"
+
+  backend:
+    build:
+      context: ./backend
+    container_name: mk_school_backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://mk_user:mk_password@postgres:5432/mk_school
+      REDIS_URL: redis://redis:6379/0
+      APP_NAME: MK School ERP
+      APP_LOCALE: ar-EG
+      APP_TIMEZONE: Africa/Cairo
+    ports:
+      - "8100:8000"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    image: node:22-alpine
+    container_name: mk_school_frontend
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- -H 0.0.0.0"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8100
+      API_INTERNAL_BASE_URL: http://backend:8000
+      CI: true
+    ports:
+      - "3100:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+
+volumes:
+  mk_postgres_data:
