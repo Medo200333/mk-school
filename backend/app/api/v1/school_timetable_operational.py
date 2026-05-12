@@ -3,6 +3,9 @@ from __future__ import annotations
 import csv
 import io
 import json
+from uuid import UUID
+from decimal import Decimal
+from datetime import date, datetime, time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,6 +25,25 @@ class TimetableCsvImport(BaseModel):
 
 def rows(result) -> list[dict[str, Any]]:
     return [dict(row._mapping) for row in result]
+
+
+
+def json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): json_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [json_safe(v) for v in value]
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
 
 
 async def audit_event(
@@ -44,7 +66,7 @@ async def audit_event(
             "action": action,
             "entity_type": entity_type,
             "entity_id": entity_id,
-            "payload": json.dumps(payload or {}, ensure_ascii=False),
+            "payload": json.dumps(json_safe(payload or {}), ensure_ascii=False),
         },
     )
 
