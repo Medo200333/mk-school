@@ -9,7 +9,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -819,7 +819,7 @@ class ConstraintPayload(BaseModel):
     target_scope: str
     target_id: str | None = None
     rule_code: str
-    rule_payload: dict[str, Any] = {}
+    rule_payload: dict[str, Any] = Field(default_factory=dict)
     weight: int = 10
 
 
