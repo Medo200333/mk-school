@@ -995,8 +995,8 @@ async def slot_is_free(
           AND period_id = CAST(:period_id AS uuid)
           AND (
             school_class_id = CAST(:class_id AS uuid)
-            OR (:teacher_id IS NOT NULL AND teacher_id = CAST(:teacher_id AS uuid))
-            OR (:classroom_id IS NOT NULL AND classroom_id = CAST(:classroom_id AS uuid))
+            OR (CAST(:teacher_id AS uuid) IS NOT NULL AND teacher_id = CAST(:teacher_id AS uuid))
+            OR (CAST(:classroom_id AS uuid) IS NOT NULL AND classroom_id = CAST(:classroom_id AS uuid))
           )
         LIMIT 1
     """), {
