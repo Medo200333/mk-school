@@ -718,6 +718,220 @@ def _extract_classtt_blocks(data: bytes, limit: int = 40) -> list[dict[str, Any]
     return blocks
 
 
+def _arabic_phrase_parts(value: str) -> list[str]:
+    cleaned = _clean_roz_text(value)
+    cleaned = re.sub(r"[A-Za-z0-9#@_\-\\/|{}\[\]().,;:!?\"'`~+=*&%^$<>]+", " ", cleaned)
+    cleaned = re.sub(r"[^\u0600-\u06ff\s]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return re.findall(r"[\u0600-\u06ff]{2,}(?:\s+[\u0600-\u06ff]{2,}){0,4}", cleaned)
+
+
+def _compact_arabic_phrase(value: str) -> str:
+    words = [w for w in value.split() if len(w) >= 2]
+    if not words:
+        return ""
+
+    if len(words) >= 4 and len(words) % 2 == 0:
+        half = len(words) // 2
+        if words[:half] == words[half:]:
+            words = words[:half]
+
+    if len(words) >= 3 and words[-1] == words[0]:
+        words = words[:-1]
+
+    if len(words) >= 3 and words[-1] == words[1]:
+        words = words[:2]
+
+    return " ".join(words).strip()
+
+
+def _dedup_entity_rows(rows: list[dict[str, Any]], key_name: str, limit: int = 80) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    output: list[dict[str, Any]] = []
+
+    for row in rows:
+        key = str(row.get(key_name, "")).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        output.append(row)
+        if len(output) >= limit:
+            break
+
+    return output
+
+
+def _extract_roz_teacher_candidates(records: list[dict[str, Any]], limit: int = 80) -> list[dict[str, Any]]:
+    subject_words = {
+        "قران",
+        "كريم",
+        "تربية",
+        "دينية",
+        "اسلامية",
+        "لغة",
+        "عربية",
+        "رياضيات",
+        "انجليزية",
+        "متعدد",
+        "التربية",
+        "الرياضية",
+        "دراسات",
+        "علوم",
+        "فنية",
+        "مهارات",
+        "مهنية",
+        "العاب",
+        "ودين",
+        "توكاتسو",
+        "تكنولجيا",
+        "تكنولوجيا",
+        "عربي",
+        "رياضة",
+    }
+    structural_words = {
+        "الصف",
+        "الدراسي",
+        "الحصة",
+        "الاولي",
+        "الثانية",
+        "الثالثة",
+        "الرابعة",
+        "الخامسة",
+        "الفصل",
+        "بالكامل",
+        "بنات",
+        "أولاد",
+        "اولاد",
+        "المجموعة",
+        "المعلمون",
+        "المواد",
+        "الغرف",
+        "الدراسية",
+        "الطلاب",
+        "الكل",
+    }
+
+    candidates: list[dict[str, Any]] = []
+
+    for record in sorted(records, key=lambda row: int(row.get("offset", 0))):
+        offset = int(record.get("offset", 0))
+        text_value = str(record.get("text", ""))
+
+        # In this ASCTT sample, the clean teacher-name band starts after the subject band.
+        # Keep this as confidence scoring, not a hard parser contract.
+        offset_score = 2 if 106000 <= offset <= 132200 else 0
+
+        for phrase in _arabic_phrase_parts(text_value):
+            compact = _compact_arabic_phrase(phrase)
+            words = compact.split()
+
+            if len(words) < 2 or len(words) > 4:
+                continue
+
+            word_set = set(words)
+            if word_set & subject_words:
+                continue
+            if word_set & structural_words:
+                continue
+
+            if len(compact) < 7 or len(compact) > 45:
+                continue
+
+            arabic_chars = sum(1 for ch in compact if "\u0600" <= ch <= "\u06ff")
+            if arabic_chars < 6:
+                continue
+
+            confidence = 50 + offset_score * 20
+            if len(words) in {2, 3}:
+                confidence += 10
+            if any(token in compact for token in ("عبد", "محمد", "ابراهيم", "حسن", "حسين", "السيد")):
+                confidence += 10
+
+            candidates.append(
+                {
+                    "teacher_name_ar": compact,
+                    "offset": offset,
+                    "source_kind": record.get("kind"),
+                    "source_length": record.get("length"),
+                    "confidence": min(confidence, 99),
+                    "source_text": text_value[:120],
+                }
+            )
+
+    return _dedup_entity_rows(
+        sorted(candidates, key=lambda row: (-int(row["confidence"]), int(row["offset"]), row["teacher_name_ar"])),
+        "teacher_name_ar",
+        limit=limit,
+    )
+
+
+def _extract_roz_subject_candidates(records: list[dict[str, Any]], limit: int = 80) -> list[dict[str, Any]]:
+    known_subject_patterns = [
+        "قران كريم",
+        "تربية دينية اسلامية",
+        "تربية دينية",
+        "لغة عربية",
+        "رياضيات",
+        "لغة انجليزية",
+        "متعدد",
+        "التربية الرياضية",
+        "تربية الرياضية",
+        "دراسات",
+        "علوم",
+        "تربية فنية مهارات مهنية",
+        "تربية فنية",
+        "مهارات مهنية",
+        "العاب ودين",
+        "توكاتسو",
+        "تكنولوجيا",
+        "تكنولجيا",
+    ]
+
+    candidates: list[dict[str, Any]] = []
+
+    for record in sorted(records, key=lambda row: int(row.get("offset", 0))):
+        offset = int(record.get("offset", 0))
+        text_value = _clean_roz_text(str(record.get("text", "")))
+
+        for subject in known_subject_patterns:
+            if subject in text_value:
+                confidence = 95 if 103000 <= offset <= 106000 else 75
+                candidates.append(
+                    {
+                        "subject_name_ar": subject,
+                        "offset": offset,
+                        "source_kind": record.get("kind"),
+                        "confidence": confidence,
+                        "source_text": text_value[:120],
+                    }
+                )
+
+    return _dedup_entity_rows(
+        sorted(candidates, key=lambda row: (-int(row["confidence"]), int(row["offset"]), row["subject_name_ar"])),
+        "subject_name_ar",
+        limit=limit,
+    )
+
+
+def _extract_roz_structured_entities(records: list[dict[str, Any]]) -> dict[str, Any]:
+    teachers = _extract_roz_teacher_candidates(records)
+    subjects = _extract_roz_subject_candidates(records)
+
+    return {
+        "parser_stage": "structured_preview_only",
+        "safe_to_import": False,
+        "teachers_count": len(teachers),
+        "subjects_count": len(subjects),
+        "teachers": teachers,
+        "subjects": subjects,
+        "notes_ar": [
+            "هذه معاينة منظمة فقط ولا تنفذ أي إدخال في قاعدة البيانات.",
+            "أسماء المدرسين مستخرجة من نطاقات عربية داخل ملف ROZ بترميز CP1256 مع درجات ثقة.",
+            "قبل الاستيراد الفعلي يجب ربط الجداول الثنائية CLASSTT بالخانات/الأيام/الحصص بشكل نهائي.",
+        ],
+    }
+
+
 def _build_roz_semantic_preview(data: bytes, records: list[dict[str, Any]]) -> dict[str, Any]:
     text_blob = "\n".join(str(row.get("text") or "") for row in records)
 
@@ -757,6 +971,7 @@ def _build_roz_semantic_preview(data: bytes, records: list[dict[str, Any]]) -> d
         "class_timetable_blocks": _extract_classtt_blocks(data),
         "marker_windows": marker_windows,
         "meaningful_records": _meaningful_arabic_records(records),
+        "structured_entities": _extract_roz_structured_entities(records),
         "interpretation_ar": [
             "تم تأكيد أن الملف يحتوي بنية ASCTT/ROZ ثنائية وليست CSV أو SQLite.",
             "تم العثور على جداول فصول بعلامات CLASSTT/CLASSTT_END.",
