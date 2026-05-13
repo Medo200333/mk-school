@@ -713,6 +713,146 @@ async def cleanup_smoke_data(
         WHERE {version_join_where}
     """)
 
+    previews: dict[str, list[dict[str, Any]]] = {}
+
+    async def preview_query(name: str, sql: str) -> None:
+        result = await db.execute(text(sql), params)
+        previews[name] = json_safe([dict(row._mapping) for row in result])
+
+    await preview_query("teachers", f"""
+        SELECT
+          id::text,
+          teacher_code AS code,
+          teacher_name_ar AS name,
+          specialization AS extra,
+          created_at
+        FROM school.teachers
+        WHERE {teacher_where}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 20
+    """)
+
+    await preview_query("subjects", f"""
+        SELECT
+          id::text,
+          subject_code AS code,
+          subject_name_ar AS name,
+          color_code AS extra,
+          created_at
+        FROM school.subjects
+        WHERE {subject_where}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 20
+    """)
+
+    await preview_query("classes", f"""
+        SELECT
+          id::text,
+          class_code AS code,
+          class_name_ar AS name,
+          concat_ws(' / ', stage_name_ar, grade_name_ar) AS extra,
+          created_at
+        FROM school.school_classes
+        WHERE {class_where}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 20
+    """)
+
+    await preview_query("classrooms", f"""
+        SELECT
+          id::text,
+          COALESCE(room_code, code) AS code,
+          COALESCE(room_name_ar, name_ar) AS name,
+          floor_name AS extra,
+          created_at
+        FROM school.classrooms
+        WHERE {classroom_where}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 20
+    """)
+
+    await preview_query("constraints", f"""
+        SELECT
+          id::text,
+          rule_code AS code,
+          constraint_type AS name,
+          target_scope AS extra,
+          created_at
+        FROM school.timetable_constraints
+        WHERE {constraint_where}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 20
+    """)
+
+    await preview_query("versions", f"""
+        SELECT
+          id::text,
+          status AS code,
+          name_ar AS name,
+          is_current::text AS extra,
+          created_at
+        FROM school.timetable_versions
+        WHERE {version_where}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 30
+    """)
+
+    await preview_query("slots_by_content", f"""
+        SELECT
+          slot.id::text,
+          tv.name_ar AS code,
+          slot.subject_name_ar AS name,
+          slot.notes AS extra,
+          slot.created_at
+        FROM school.timetable_slots slot
+        LEFT JOIN school.timetable_versions tv ON tv.id = slot.timetable_version_id
+        WHERE {slot_where}
+        ORDER BY slot.created_at DESC NULLS LAST
+        LIMIT 30
+    """)
+
+    await preview_query("slots_by_version", f"""
+        SELECT
+          slot.id::text,
+          tv.name_ar AS code,
+          slot.subject_name_ar AS name,
+          slot.notes AS extra,
+          slot.created_at
+        FROM school.timetable_slots slot
+        JOIN school.timetable_versions tv ON tv.id = slot.timetable_version_id
+        WHERE {version_join_where}
+        ORDER BY slot.created_at DESC NULLS LAST
+        LIMIT 30
+    """)
+
+    await preview_query("generation_runs_by_version", f"""
+        SELECT
+          run.id::text,
+          tv.name_ar AS code,
+          run.status AS name,
+          concat('scheduled=', run.scheduled_lessons, ', conflicts=', run.conflict_count) AS extra,
+          run.started_at AS created_at
+        FROM school.timetable_generation_runs run
+        JOIN school.timetable_versions tv ON tv.id = run.timetable_version_id
+        WHERE {version_join_where}
+        ORDER BY run.started_at DESC NULLS LAST
+        LIMIT 20
+    """)
+
+    await preview_query("export_jobs_by_version", f"""
+        SELECT
+          job.id::text,
+          tv.name_ar AS code,
+          job.export_type AS name,
+          job.report_scope AS extra,
+          job.created_at
+        FROM school.timetable_export_jobs job
+        JOIN school.timetable_versions tv ON tv.id = job.timetable_version_id
+        WHERE {version_join_where}
+        ORDER BY job.created_at DESC NULLS LAST
+        LIMIT 20
+    """)
+
     if not payload.dry_run:
         raise HTTPException(
             status_code=409,
@@ -723,6 +863,7 @@ async def cleanup_smoke_data(
         "dry_run": True,
         "deleted": False,
         "counts": counts,
+        "preview": previews,
         "markers": SMOKE_MARKERS,
     }
 
