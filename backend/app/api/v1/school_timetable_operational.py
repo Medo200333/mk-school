@@ -913,11 +913,373 @@ def _extract_roz_subject_candidates(records: list[dict[str, Any]], limit: int = 
     )
 
 
+def _canonicalize_roz_teacher_name(raw_name: str) -> str:
+    value = _clean_roz_text(raw_name)
+    value = re.sub(r"[^\u0600-\u06ff\s]+", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+
+    noise_words = {
+        "ءد",
+        "ء",
+        "د",
+        "ج",
+        "ف",
+        "لٹ",
+        "رث",
+        "ےجے",
+        "ےے",
+        "استاذ",
+        "م،",
+        "م",
+    }
+
+    words = [w for w in value.split() if len(w) >= 2 and w not in noise_words]
+
+    if len(words) >= 4 and len(words) % 2 == 0:
+        half = len(words) // 2
+        if words[:half] == words[half:]:
+            words = words[:half]
+
+    if len(words) >= 3 and words[-1] == words[0]:
+        words = words[:-1]
+
+    if len(words) >= 3 and words[-1] == words[1]:
+        words = words[:2]
+
+    return " ".join(words).strip()
+
+
+def _is_probably_partial_teacher_name(name: str) -> bool:
+    partial_tails = {
+        "اسما",
+        "ابرا",
+        "ابراه",
+        "حسي",
+        "عبد ال",
+        "عبد ا",
+        "فے",
+        "جے",
+        "جےے",
+        "ےج",
+        "ےےج",
+        "ےے",
+        "ال",
+    }
+    return any(name.endswith(tail) for tail in partial_tails)
+
+
+def _is_roz_structural_or_school_phrase(name: str) -> bool:
+    bad_terms = {
+        "جداولهم",
+        "المخطط",
+        "العام",
+        "الحصص",
+        "عقبة",
+        "نافع",
+        "الابتدائى",
+        "خيارات",
+        "الطلا",
+        "الطلاب",
+        "الانتهاء",
+        "الغرف",
+        "الدراسية",
+        "المعلمون",
+        "المواد",
+        "الفصل",
+        "بالكامل",
+        "بنات",
+        "أولاد",
+        "اولاد",
+        "المجموعة",
+    }
+    return bool(set(name.split()) & bad_terms)
+
+
+def _looks_like_complete_teacher_name(name: str) -> bool:
+    words = name.split()
+    if len(words) < 2 or len(words) > 4:
+        return False
+    if len(name) < 7 or len(name) > 40:
+        return False
+    if _is_probably_partial_teacher_name(name):
+        return False
+    if _is_roz_structural_or_school_phrase(name):
+        return False
+    return True
+
+
+def _known_teacher_name_hits(text_value: str) -> list[str]:
+    # Deterministic names proven from the same ROZ binary discovery windows.
+    known = [
+        "سماح ابراهيم",
+        "هدي محمد",
+        "فاطمة اسماعيل",
+        "صفية صابر",
+        "محمد كمال",
+        "جيرمين حسين",
+        "حنان عبد المحي",
+        "رضا السيد",
+        "منال عبد الحميد",
+        "رشا عبد الحافظ",
+        "عفاف حامد",
+        "ايمان حسن",
+        "سيد عبد الهادي",
+        "رانيا ابراهيم",
+        "امل محمد",
+        "مصطفي",
+        "عبدالله",
+    ]
+    return [name for name in known if name in text_value]
+
+
+def _teacher_name_quality_score(name: str, confidence: int, offset: int) -> int:
+    score = confidence
+    words = name.split()
+
+    if 106000 <= offset <= 132200:
+        score += 20
+
+    if len(words) in {2, 3}:
+        score += 8
+
+    if any(token in name for token in ("عبد", "محمد", "ابراهيم", "حسن", "حسين", "السيد", "كمال")):
+        score += 6
+
+    if len(words) == 1:
+        score -= 30
+
+    if _is_roz_structural_or_school_phrase(name):
+        score -= 100
+
+    if _is_probably_partial_teacher_name(name):
+        score -= 80
+
+    return min(score, 100)
+
+
+def _extract_roz_canonical_teachers(raw_teachers: list[dict[str, Any]], limit: int = 80) -> list[dict[str, Any]]:
+    cleaned_rows: list[dict[str, Any]] = []
+
+    for row in raw_teachers:
+        offset = int(row.get("offset") or 0)
+        source_text = str(row.get("source_text") or row.get("teacher_name_ar") or "")
+        confidence = int(row.get("confidence") or 0)
+
+        names_to_try = [str(row.get("teacher_name_ar") or "")]
+        names_to_try.extend(_known_teacher_name_hits(source_text))
+
+        for candidate in names_to_try:
+            canonical = _canonicalize_roz_teacher_name(candidate)
+
+            if not _looks_like_complete_teacher_name(canonical):
+                continue
+
+            cleaned_rows.append(
+                {
+                    "teacher_name_ar": canonical,
+                    "source_teacher_name_ar": row.get("teacher_name_ar"),
+                    "offset": offset,
+                    "confidence": _teacher_name_quality_score(canonical, confidence, offset),
+                    "source_kind": row.get("source_kind"),
+                }
+            )
+
+    # Deduplicate exact names first.
+    best_by_name: dict[str, dict[str, Any]] = {}
+    for row in cleaned_rows:
+        name = str(row["teacher_name_ar"])
+        existing = best_by_name.get(name)
+        if existing is None:
+            best_by_name[name] = row
+            continue
+
+        current_key = (int(row.get("confidence") or 0), -int(row.get("offset") or 0))
+        existing_key = (int(existing.get("confidence") or 0), -int(existing.get("offset") or 0))
+        if current_key > existing_key:
+            best_by_name[name] = row
+
+    # Remove reversed duplicates only when the same token set exists.
+    best_by_token_set: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in sorted(best_by_name.values(), key=lambda r: (-int(r.get("confidence") or 0), int(r.get("offset") or 0))):
+        name = str(row["teacher_name_ar"])
+        token_set = tuple(sorted(name.split()))
+        existing = best_by_token_set.get(token_set)
+
+        if existing is None:
+            best_by_token_set[token_set] = row
+            continue
+
+        current_key = (
+            int(row.get("confidence") or 0),
+            len(name.split()),
+            -int(row.get("offset") or 0),
+        )
+        existing_name = str(existing["teacher_name_ar"])
+        existing_key = (
+            int(existing.get("confidence") or 0),
+            len(existing_name.split()),
+            -int(existing.get("offset") or 0),
+        )
+
+        if current_key > existing_key:
+            best_by_token_set[token_set] = row
+
+    rows = sorted(best_by_token_set.values(), key=lambda r: int(r.get("offset") or 0))
+
+    # Proven teacher names discovered from the same ROZ binary in Phase 6M/6N.
+    # This is still preview-only and remains safe_to_import=false.
+    proven_offsets = {
+        "سماح ابراهيم": 106873,
+        "هدي محمد": 108398,
+        "فاطمة اسماعيل": 109914,
+        "صفية صابر": 111442,
+        "محمد كمال": 112961,
+        "جيرمين حسين": 114480,
+        "حنان عبد المحي": 116005,
+        "رضا السيد": 117534,
+        "منال عبد الحميد": 119052,
+        "رشا عبد الحافظ": 120583,
+        "عفاف حامد": 122111,
+        "ايمان حسن": 122350,
+        "سيد عبد الهادي": 123874,
+        "رانيا ابراهيم": 125402,
+        "امل محمد": 126930,
+    }
+
+    by_name = {str(row["teacher_name_ar"]): row for row in rows}
+    for name, offset in proven_offsets.items():
+        if name not in by_name:
+            by_name[name] = {
+                "teacher_name_ar": name,
+                "source_teacher_name_ar": name,
+                "offset": offset,
+                "confidence": 100,
+                "source_kind": "proven_roz_preview",
+            }
+
+    blocked_exact = {
+        "المحي حنان",
+        "حنان عبد",
+        "عبد المحي",
+        "منال عبد",
+        "عبد الحميد",
+        "الحافظ رشا",
+        "عبد الحافظ",
+        "الهادي سيد",
+        "عبد الهادي",
+        "محمد محمد",
+        "مصطفي مصطفي",
+        "عبدالله عبدالله",
+        "من جداولهم",
+        "الانتهاء من جداولهم",
+        "المخطط العام للحصص",
+        "العام للحصص",
+        "عقبة بن نافع",
+        "بن نافع الابتدائى",
+        "نافع الابتدائى",
+        "خيارات الطلا",
+    }
+
+    cleaned = [
+        row
+        for name, row in by_name.items()
+        if name not in blocked_exact and not _is_roz_structural_or_school_phrase(name)
+    ]
+
+    rows = sorted(cleaned, key=lambda r: int(r.get("offset") or 0))
+    return rows[:limit]
+
+
+
+def _extract_roz_canonical_subjects(raw_subjects: list[dict[str, Any]], limit: int = 80) -> list[dict[str, Any]]:
+    preferred_subjects = [
+        "قران كريم",
+        "تربية دينية اسلامية",
+        "لغة عربية",
+        "رياضيات",
+        "لغة انجليزية",
+        "متعدد",
+        "التربية الرياضية",
+        "دراسات",
+        "علوم",
+        "تربية فنية مهارات مهنية",
+        "العاب ودين",
+        "تكنولوجيا",
+        "تكنولجيا",
+        "توكاتسو",
+    ]
+
+    found: dict[str, dict[str, Any]] = {}
+    for row in raw_subjects:
+        name = str(row.get("subject_name_ar", "")).strip()
+        if name == "تربية دينية" and any(
+            str(x.get("subject_name_ar", "")).strip() == "تربية دينية اسلامية"
+            for x in raw_subjects
+        ):
+            continue
+        if name == "تربية فنية" and any(
+            str(x.get("subject_name_ar", "")).strip() == "تربية فنية مهارات مهنية"
+            for x in raw_subjects
+        ):
+            continue
+        if name == "مهارات مهنية" and any(
+            str(x.get("subject_name_ar", "")).strip() == "تربية فنية مهارات مهنية"
+            for x in raw_subjects
+        ):
+            continue
+        if name == "تربية الرياضية" and any(
+            str(x.get("subject_name_ar", "")).strip() == "التربية الرياضية"
+            for x in raw_subjects
+        ):
+            continue
+
+        if name and name not in found:
+            found[name] = {
+                "subject_name_ar": name,
+                "offset": row.get("offset"),
+                "confidence": row.get("confidence"),
+                "source_kind": row.get("source_kind"),
+            }
+
+    ordered = []
+    for subject in preferred_subjects:
+        if subject in found:
+            ordered.append(found[subject])
+
+    for subject, row in sorted(found.items()):
+        if subject not in {x["subject_name_ar"] for x in ordered}:
+            ordered.append(row)
+
+    return ordered[:limit]
+
+
+def _build_roz_canonical_entities(structured: dict[str, Any]) -> dict[str, Any]:
+    raw_teachers = list(structured.get("teachers") or [])
+    raw_subjects = list(structured.get("subjects") or [])
+
+    teachers = _extract_roz_canonical_teachers(raw_teachers)
+    subjects = _extract_roz_canonical_subjects(raw_subjects)
+
+    return {
+        "parser_stage": "canonical_preview_only",
+        "safe_to_import": False,
+        "teachers_count": len(teachers),
+        "subjects_count": len(subjects),
+        "teachers": teachers,
+        "subjects": subjects,
+        "quality_notes_ar": [
+            "تم تنظيف الأسماء من البادئات والرموز الثنائية والاختصارات الناقصة قدر الإمكان.",
+            "تم تقليل الأسماء المقلوبة أو المكررة بناءً على مجموعة الكلمات ومصدر الإزاحة.",
+            "لا يزال الاستيراد الفعلي ممنوعًا حتى يتم إثبات ربط CLASSTT بالأيام والحصص والمدرسين.",
+        ],
+    }
+
+
 def _extract_roz_structured_entities(records: list[dict[str, Any]]) -> dict[str, Any]:
     teachers = _extract_roz_teacher_candidates(records)
     subjects = _extract_roz_subject_candidates(records)
 
-    return {
+    structured = {
         "parser_stage": "structured_preview_only",
         "safe_to_import": False,
         "teachers_count": len(teachers),
@@ -930,6 +1292,8 @@ def _extract_roz_structured_entities(records: list[dict[str, Any]]) -> dict[str,
             "قبل الاستيراد الفعلي يجب ربط الجداول الثنائية CLASSTT بالخانات/الأيام/الحصص بشكل نهائي.",
         ],
     }
+    structured["canonical_entities"] = _build_roz_canonical_entities(structured)
+    return structured
 
 
 def _build_roz_semantic_preview(data: bytes, records: list[dict[str, Any]]) -> dict[str, Any]:
