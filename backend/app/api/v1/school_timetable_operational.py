@@ -631,6 +631,7 @@ async def import_time_table_csv(
 class SmokeCleanupPayload(BaseModel):
     confirm: str
     dry_run: bool = True
+    execute_confirm: str | None = None
 
 
 SMOKE_MARKERS = [
@@ -854,10 +855,135 @@ async def cleanup_smoke_data(
     """)
 
     if not payload.dry_run:
-        raise HTTPException(
-            status_code=409,
-            detail="هذا الإصدار يدعم dry_run فقط. سيتم تنفيذ الحذف الفعلي في مرحلة منفصلة بعد مراجعة الأعداد.",
-        )
+        if payload.execute_confirm != "EXECUTE_DELETE_SMOKE_DATA":
+            raise HTTPException(
+                status_code=409,
+                detail="تنفيذ حذف بيانات الاختبار يتطلب execute_confirm=EXECUTE_DELETE_SMOKE_DATA بالإضافة إلى confirm=DELETE_SMOKE_DATA",
+            )
+
+        deleted_counts: dict[str, int] = {}
+
+        async def delete_query(name: str, sql: str) -> None:
+            result = await db.execute(text(sql), params)
+            deleted_counts[name] = int(result.scalar_one())
+
+        await delete_query("export_jobs_by_version", f"""
+            DELETE FROM school.timetable_export_jobs job
+            USING school.timetable_versions tv
+            WHERE tv.id = job.timetable_version_id
+              AND ({version_join_where})
+            RETURNING job.id
+        """)
+
+        await delete_query("generation_runs_by_version", f"""
+            DELETE FROM school.timetable_generation_runs run
+            USING school.timetable_versions tv
+            WHERE tv.id = run.timetable_version_id
+              AND ({version_join_where})
+            RETURNING run.id
+        """)
+
+        await delete_query("slots", f"""
+            WITH smoke_teachers AS (
+                SELECT id FROM school.teachers WHERE {teacher_where}
+            ),
+            smoke_classes AS (
+                SELECT id FROM school.school_classes WHERE {class_where}
+            ),
+            smoke_classrooms AS (
+                SELECT id FROM school.classrooms WHERE {classroom_where}
+            ),
+            smoke_versions AS (
+                SELECT id FROM school.timetable_versions WHERE {version_where}
+            ),
+            candidates AS (
+                SELECT DISTINCT slot.id
+                FROM school.timetable_slots slot
+                WHERE slot.timetable_version_id IN (SELECT id FROM smoke_versions)
+                   OR slot.teacher_id IN (SELECT id FROM smoke_teachers)
+                   OR slot.school_class_id IN (SELECT id FROM smoke_classes)
+                   OR slot.classroom_id IN (SELECT id FROM smoke_classrooms)
+                   OR ({slot_where})
+            )
+            DELETE FROM school.timetable_slots slot
+            USING candidates
+            WHERE slot.id = candidates.id
+            RETURNING slot.id
+        """)
+
+        await delete_query("curriculum_plans", f"""
+            WITH smoke_teachers AS (
+                SELECT id FROM school.teachers WHERE {teacher_where}
+            ),
+            smoke_subjects AS (
+                SELECT id FROM school.subjects WHERE {subject_where}
+            ),
+            smoke_classes AS (
+                SELECT id FROM school.school_classes WHERE {class_where}
+            ),
+            smoke_classrooms AS (
+                SELECT id FROM school.classrooms WHERE {classroom_where}
+            ),
+            candidates AS (
+                SELECT DISTINCT cp.id
+                FROM school.curriculum_plans cp
+                WHERE cp.teacher_id IN (SELECT id FROM smoke_teachers)
+                   OR cp.subject_id IN (SELECT id FROM smoke_subjects)
+                   OR cp.school_class_id IN (SELECT id FROM smoke_classes)
+                   OR cp.classroom_id IN (SELECT id FROM smoke_classrooms)
+            )
+            DELETE FROM school.curriculum_plans cp
+            USING candidates
+            WHERE cp.id = candidates.id
+            RETURNING cp.id
+        """)
+
+        await delete_query("constraints", f"""
+            DELETE FROM school.timetable_constraints tc
+            WHERE {constraint_where}
+            RETURNING tc.id
+        """)
+
+        await delete_query("versions", f"""
+            DELETE FROM school.timetable_versions tv
+            WHERE {version_where}
+            RETURNING tv.id
+        """)
+
+        await delete_query("subjects", f"""
+            DELETE FROM school.subjects s
+            WHERE {subject_where}
+            RETURNING s.id
+        """)
+
+        await delete_query("teachers", f"""
+            DELETE FROM school.teachers t
+            WHERE {teacher_where}
+            RETURNING t.id
+        """)
+
+        await delete_query("classes", f"""
+            DELETE FROM school.school_classes cls
+            WHERE {class_where}
+            RETURNING cls.id
+        """)
+
+        await delete_query("classrooms", f"""
+            DELETE FROM school.classrooms room
+            WHERE {classroom_where}
+            RETURNING room.id
+        """)
+
+        await db.commit()
+
+        return {
+            "dry_run": False,
+            "deleted": True,
+            "counts_before": counts,
+            "deleted_counts": deleted_counts,
+            "preview_before": previews,
+            "markers": SMOKE_MARKERS,
+        }
 
     return {
         "dry_run": True,
