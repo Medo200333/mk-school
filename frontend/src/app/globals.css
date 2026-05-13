@@ -872,3 +872,472 @@ th {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Phase 6W Weekly Board Print Panel */
+.weekly-board-panel {
+  border: 1px solid rgba(92, 60, 30, 0.18);
+  overflow: hidden;
+}
+
+.weekly-board-toolbar {
+  align-items: flex-start;
+}
+
+.weekly-board-actions {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto;
+  gap: 10px;
+  min-width: min(100%, 620px);
+}
+
+.weekly-board-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 10px;
+}
+
+.weekly-board-summary span {
+  border: 1px solid rgba(92, 60, 30, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 248, 235, 0.72);
+  color: #4b2f17;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.weekly-board-print-note {
+  align-items: center;
+  border: 1px solid rgba(30, 120, 70, 0.16);
+  border-radius: 16px;
+  background: rgba(240, 253, 244, 0.64);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 12px 14px;
+}
+
+.weekly-board-print-note strong {
+  color: #166534;
+}
+
+.weekly-board-scroll {
+  display: grid;
+  gap: 18px;
+  max-height: 780px;
+  overflow: auto;
+  padding-inline-end: 4px;
+}
+
+.weekly-board-class-card {
+  border: 1px solid rgba(92, 60, 30, 0.16);
+  border-radius: 20px;
+  background: rgba(255, 252, 245, 0.84);
+  box-shadow: 0 16px 36px rgba(66, 44, 22, 0.07);
+  overflow: hidden;
+}
+
+.weekly-board-class-head {
+  align-items: center;
+  border-bottom: 1px solid rgba(92, 60, 30, 0.12);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.weekly-board-class-head h3 {
+  color: #3f2a18;
+  margin: 0 0 4px;
+}
+
+.weekly-board-class-head small,
+.weekly-board-class-head span {
+  color: #7a6652;
+  font-weight: 700;
+}
+
+.weekly-board-table {
+  border-collapse: collapse;
+  min-width: 980px;
+  width: 100%;
+}
+
+.weekly-board-table th,
+.weekly-board-table td {
+  border: 1px solid rgba(92, 60, 30, 0.12);
+  padding: 8px;
+  text-align: right;
+  vertical-align: top;
+}
+
+.weekly-board-table thead th {
+  background: rgba(92, 60, 30, 0.10);
+  color: #3f2a18;
+  font-weight: 900;
+  text-align: center;
+}
+
+.weekly-board-table tbody th {
+  background: rgba(255, 248, 235, 0.78);
+  color: #4b2f17;
+  min-width: 110px;
+}
+
+.weekly-board-table tbody th strong,
+.weekly-board-table tbody th small {
+  display: block;
+}
+
+.weekly-board-table tbody th small {
+  color: #7a6652;
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.weekly-board-cell {
+  background: rgba(255, 255, 255, 0.78);
+  min-width: 132px;
+}
+
+.weekly-board-cell-empty {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(92, 60, 30, 0.035),
+    rgba(92, 60, 30, 0.035) 6px,
+    rgba(255, 255, 255, 0.58) 6px,
+    rgba(255, 255, 255, 0.58) 12px
+  );
+  color: rgba(92, 60, 30, 0.35);
+  text-align: center;
+}
+
+.weekly-empty-mark {
+  color: rgba(92, 60, 30, 0.35);
+  font-weight: 900;
+}
+
+.weekly-board-lesson {
+  display: grid;
+  gap: 4px;
+}
+
+.weekly-board-subject {
+  border-inline-start: 5px solid #8b5a2b;
+  color: #3f2a18;
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+  padding-inline-start: 7px;
+}
+
+.weekly-board-teacher {
+  color: #5f4630;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.weekly-board-lesson small {
+  color: #7a6652;
+  font-size: 11px;
+}
+
+.weekly-board-notes {
+  border-top: 1px solid rgba(92, 60, 30, 0.12);
+  padding-top: 12px;
+}
+
+@media (max-width: 980px) {
+  .weekly-board-actions {
+    grid-template-columns: 1fr;
+    min-width: 0;
+  }
+
+  .weekly-board-scroll {
+    max-height: 620px;
+  }
+}
+
+@media print {
+  .timetable-studio > section:not(.print-weekly-board) {
+    display: none !important;
+  }
+
+  .print-weekly-board {
+    border: 0 !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .weekly-board-toolbar .weekly-board-actions,
+  .weekly-board-print-note,
+  .weekly-board-notes {
+    display: none !important;
+  }
+
+  .weekly-board-scroll {
+    display: block;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .weekly-board-class-card {
+    break-inside: avoid;
+    box-shadow: none !important;
+    margin: 0 0 14px !important;
+    page-break-inside: avoid;
+  }
+
+  .weekly-board-class-head {
+    padding: 8px 10px;
+  }
+
+  .weekly-board-table {
+    font-size: 9px;
+    min-width: 0 !important;
+  }
+
+  .weekly-board-table th,
+  .weekly-board-table td {
+    padding: 4px;
+  }
+
+  .weekly-board-cell {
+    min-width: 0;
+  }
+
+  .weekly-board-subject {
+    font-size: 9px;
+  }
+
+  .weekly-board-teacher,
+  .weekly-board-lesson small {
+    font-size: 8px;
+  }
+}
+
+/* Phase 6W Weekly Board UI + Print Panel */
+.weekly-board-panel {
+  border: 1px solid rgba(139, 90, 43, 0.18);
+  overflow: hidden;
+}
+
+.weekly-board-toolbar {
+  align-items: start;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+}
+
+.weekly-board-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.weekly-board-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.weekly-board-summary span {
+  background: rgba(92, 60, 30, 0.08);
+  border: 1px solid rgba(92, 60, 30, 0.12);
+  border-radius: 14px;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.weekly-board-note {
+  align-items: center;
+  background: rgba(255, 248, 235, 0.82);
+  border: 1px solid rgba(139, 90, 43, 0.18);
+  border-radius: 16px;
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+}
+
+.weekly-board-classes {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.weekly-board-class-card {
+  background: rgba(255, 252, 246, 0.82);
+  border: 1px solid rgba(92, 60, 30, 0.14);
+  border-radius: 18px;
+  box-shadow: 0 16px 35px rgba(66, 44, 22, 0.07);
+  overflow: hidden;
+}
+
+.weekly-board-class-head {
+  align-items: center;
+  background: rgba(92, 60, 30, 0.08);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.weekly-board-class-head h3 {
+  margin: 0;
+}
+
+.weekly-board-class-head small,
+.weekly-board-class-head span {
+  color: rgba(50, 35, 24, 0.7);
+  font-weight: 800;
+}
+
+.weekly-board-scroll {
+  overflow: auto;
+}
+
+.weekly-board-table {
+  border-collapse: collapse;
+  min-width: 980px;
+  width: 100%;
+}
+
+.weekly-board-table th,
+.weekly-board-table td {
+  border: 1px solid rgba(92, 60, 30, 0.14);
+  padding: 8px;
+  text-align: center;
+  vertical-align: top;
+}
+
+.weekly-board-table thead th,
+.weekly-board-table tbody th {
+  background: rgba(92, 60, 30, 0.08);
+  color: #3f2a18;
+  font-weight: 900;
+  min-width: 92px;
+}
+
+.weekly-board-table th small {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 3px;
+  opacity: 0.72;
+}
+
+.weekly-board-cell {
+  border-inline-start: 4px solid transparent;
+  min-height: 78px;
+  min-width: 118px;
+}
+
+.weekly-board-cell-filled {
+  background: rgba(255, 251, 244, 0.95);
+}
+
+.weekly-board-cell-empty {
+  background: rgba(255, 255, 255, 0.58);
+  color: rgba(50, 35, 24, 0.26);
+}
+
+.weekly-board-subject,
+.weekly-board-teacher,
+.weekly-board-cell small {
+  display: block;
+}
+
+.weekly-board-subject {
+  color: #3f2a18;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.weekly-board-teacher {
+  color: #6b4b2d;
+  font-size: 12px;
+  font-weight: 800;
+  margin-top: 4px;
+}
+
+.weekly-board-empty-mark {
+  display: inline-block;
+  font-size: 18px;
+  line-height: 1;
+  padding-top: 18px;
+}
+
+@media (max-width: 980px) {
+  .weekly-board-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-board-note {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media print {
+  body {
+    background: #fff !important;
+  }
+
+  .hero,
+  .stats,
+  .studio-top,
+  .version-compare-panel,
+  .cleanup-dry-run-panel,
+  .studio-board,
+  .roz-preview-panel,
+  .roz-entity-import-panel,
+  .weekly-board-actions,
+  .weekly-board-note,
+  .weekly-board-panel > .weekly-board-toolbar,
+  .weekly-board-panel ~ section {
+    display: none !important;
+  }
+
+  .weekly-board-panel {
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  .weekly-board-print-area {
+    margin: 0 !important;
+  }
+
+  .weekly-board-summary {
+    grid-template-columns: repeat(4, 1fr);
+    margin-bottom: 10px;
+  }
+
+  .weekly-board-class-card {
+    break-inside: avoid;
+    box-shadow: none !important;
+    margin-bottom: 12px;
+  }
+
+  .weekly-board-scroll {
+    overflow: visible;
+  }
+
+  .weekly-board-table {
+    font-size: 10px;
+    min-width: 0;
+  }
+
+  .weekly-board-table th,
+  .weekly-board-table td {
+    padding: 5px;
+  }
+
+  .weekly-board-cell {
+    min-height: 54px;
+    min-width: 0;
+  }
+}
+

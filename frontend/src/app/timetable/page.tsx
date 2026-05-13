@@ -172,6 +172,48 @@ type RozEntityImportResult = {
   notes_ar?: string[];
 };
 
+type WeeklyBoardCell = {
+  school_class_id: string;
+  class_code?: string | null;
+  class_name_ar?: string | null;
+  stage_name_ar?: string | null;
+  grade_name_ar?: string | null;
+  week_day_id: number;
+  day_code?: string | null;
+  day_name_ar?: string | null;
+  day_order?: number | null;
+  period_id: string;
+  period_no?: number | null;
+  period_name_ar?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  is_break?: boolean | null;
+  slot_id?: string | null;
+  subject_name_ar?: string | null;
+  subject_color?: string | null;
+  teacher_id?: string | null;
+  teacher_code?: string | null;
+  teacher_name_ar?: string | null;
+  classroom_id?: string | null;
+  room_name_ar?: string | null;
+  slot_type?: string | null;
+  notes?: string | null;
+  is_empty?: boolean;
+};
+
+type WeeklyBoardResult = {
+  version?: Row;
+  days?: Row[];
+  periods?: Row[];
+  classes?: Row[];
+  cells?: WeeklyBoardCell[];
+  matrix?: Record<string, Record<string, Record<string, WeeklyBoardCell>>>;
+  counts?: Record<string, number>;
+  safe_to_print?: boolean;
+  source?: Row;
+  notes_ar?: string[];
+};
+
 export default function TimetableStudioPage() {
   const [summary, setSummary] = useState<Row | null>(null);
   const [readiness, setReadiness] = useState<Row | null>(null);
@@ -206,6 +248,8 @@ export default function TimetableStudioPage() {
   const [rozPreview, setRozPreview] = useState<RozInspectResult | null>(null);
   const [rozEntityImportPlan, setRozEntityImportPlan] = useState<RozEntityImportResult | null>(null);
   const [rozExecuteConfirm, setRozExecuteConfirm] = useState("");
+  const [weeklyBoard, setWeeklyBoard] = useState<WeeklyBoardResult | null>(null);
+  const [weeklyBoardVersionId, setWeeklyBoardVersionId] = useState("");
 
   const [subjectForm, setSubjectForm] = useState({ subject_code: "", subject_name_ar: "", color_code: "#8b5a2b" });
   const [teacherForm, setTeacherForm] = useState({ teacher_code: "", teacher_name_ar: "", phone: "", specialization: "" });
@@ -464,6 +508,17 @@ export default function TimetableStudioPage() {
         execute_confirm: rozExecuteConfirm,
       });
       setRozEntityImportPlan(result);
+      return result;
+    });
+  }
+
+  async function loadWeeklyBoard(versionId = weeklyBoardVersionId) {
+    await action("عرض الجدول الأسبوعي", async () => {
+      const endpoint = versionId
+        ? `weekly-board?version_id=${encodeURIComponent(versionId)}`
+        : "weekly-board";
+      const result = await apiGet(endpoint);
+      setWeeklyBoard(result);
       return result;
     });
   }
@@ -896,6 +951,136 @@ async function exportCsv() {
           ))}
         </div>
       </section>
+
+
+        <section className="surface section-pad mt weekly-board-panel print-weekly-board">
+          <div className="studio-toolbar weekly-board-toolbar">
+            <div>
+              <div className="eyebrow">Weekly Board · Print Engine</div>
+              <h2>لوحة الجدول الأسبوعي للطباعة</h2>
+              <p className="muted">
+                عرض شامل لكل الفصول × أيام الأسبوع × الحصص من مصدر الحقيقة school.timetable_slots بدون أي استيراد ROZ للحصص.
+              </p>
+            </div>
+
+            <div className="weekly-board-actions">
+              <select className="input" value={weeklyBoardVersionId} onChange={(e) => setWeeklyBoardVersionId(e.target.value)}>
+                <option value="">النسخة الحالية</option>
+                {versions.map((version) => (
+                  <option key={version.id} value={version.id}>
+                    {version.name_ar} · {version.status}
+                  </option>
+                ))}
+              </select>
+
+              <button className="btn" disabled={busy} onClick={() => loadWeeklyBoard()}>
+                عرض الجدول الأسبوعي
+              </button>
+
+              <button className="btn btn-secondary" disabled={!weeklyBoard} onClick={printStudio}>
+                طباعة اللوحة
+              </button>
+
+              <button className="btn btn-secondary" disabled={!weeklyBoard} onClick={printStudio}>
+                طباعة الجدول
+              </button>
+            </div>
+          </div>
+
+          {weeklyBoard ? (
+            <>
+              <div className="weekly-board-summary mt-small">
+                <span>النسخة: {weeklyBoard.version?.name_ar || "غير محدد"}</span>
+                <span>الحالة: {weeklyBoard.version?.status || "—"}</span>
+                <span>الفصول: {weeklyBoard.counts?.classes || 0}</span>
+                <span>الأيام: {weeklyBoard.counts?.days || 0}</span>
+                <span>الحصص: {weeklyBoard.counts?.periods || 0}</span>
+                <span>الخلايا: {weeklyBoard.counts?.total_cells || 0}</span>
+                <span>الممتلئ: {weeklyBoard.counts?.slots || 0}</span>
+                <span>الفارغ: {weeklyBoard.counts?.empty_cells || 0}</span>
+              </div>
+
+              <div className="weekly-board-print-note mt-small">
+                <strong>{weeklyBoard.safe_to_print ? "جاهز للطباعة" : "غير جاهز للطباعة"}</strong>
+                <span>هذا العرض قراءة فقط. تعديل الحصص يتم من الشبكة المرئية أو من محرك التوليد، وليس من لوحة الطباعة.</span>
+              </div>
+
+              <div className="weekly-board-scroll mt">
+                {(weeklyBoard.classes || []).map((classRow) => {
+                  const classId = String(classRow.id);
+                  const classMatrix = weeklyBoard.matrix?.[classId] || {};
+                  const activePeriods = (weeklyBoard.periods || []).filter((period) => !period.is_break);
+
+                  return (
+                    <article className="weekly-board-class-card" key={classId}>
+                      <div className="weekly-board-class-head">
+                        <div>
+                          <h3>{classRow.class_name_ar || classRow.class_code || "فصل غير محدد"}</h3>
+                          <small>{classRow.stage_name_ar || "مرحلة غير محددة"} · {classRow.grade_name_ar || classRow.class_code || "صف غير محدد"}</small>
+                        </div>
+                        <span>{activePeriods.length} حصص × {(weeklyBoard.days || []).length} أيام</span>
+                      </div>
+
+                      <table className="weekly-board-table">
+                        <thead>
+                          <tr>
+                            <th>الحصة</th>
+                            {(weeklyBoard.days || []).map((day) => (
+                              <th key={day.id}>{day.name_ar}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activePeriods.map((period) => (
+                            <tr key={period.id}>
+                              <th>
+                                <strong>{period.name_ar || `الحصة ${period.period_no}`}</strong>
+                                <small>{text(period.starts_at)} - {text(period.ends_at)}</small>
+                              </th>
+
+                              {(weeklyBoard.days || []).map((day) => {
+                                const cell = classMatrix[String(day.id)]?.[String(period.id)];
+                                const filledCell = cell && !cell.is_empty ? cell : null;
+
+                                return (
+                                  <td className={`weekly-board-cell ${filledCell ? "" : "weekly-board-cell-empty"}`} key={`${classId}-${day.id}-${period.id}`}>
+                                    {filledCell ? (
+                                      <div className="weekly-board-lesson">
+                                        <strong className="weekly-board-subject" style={{ borderInlineStartColor: filledCell.subject_color || "#8b5a2b" }}>
+                                          {filledCell.subject_name_ar || "مادة غير محددة"}
+                                        </strong>
+                                        <span className="weekly-board-teacher">{filledCell.teacher_name_ar || "بدون مدرس"}</span>
+                                        <small>{filledCell.room_name_ar || "بدون قاعة"}</small>
+                                      </div>
+                                    ) : (
+                                      <span className="weekly-empty-mark">—</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <details className="mt-small weekly-board-notes">
+                <summary>ملاحظات مصدر الجدول</summary>
+                <ul>
+                  {(weeklyBoard.notes_ar || []).map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              </details>
+            </>
+          ) : (
+            <p className="muted mt-small">اضغط “عرض الجدول الأسبوعي” لبناء لوحة الطباعة من البيانات الحالية.</p>
+          )}
+        </section>
+
 
       <section className="split mt">
         <div className="surface section-pad">
