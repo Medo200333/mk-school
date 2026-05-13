@@ -46,6 +46,22 @@ function Metric({ label, value }: { label: string; value: any }) {
   );
 }
 
+function cleanupLabel(key: string) {
+  const labels: Record<string, string> = {
+    teachers: "مدرسون",
+    subjects: "مواد",
+    classes: "فصول",
+    classrooms: "قاعات",
+    constraints: "قيود",
+    versions: "نسخ جدول",
+    slots_by_content: "حصص بعلامات اختبار",
+    slots_by_version: "حصص داخل نسخ اختبار",
+    generation_runs_by_version: "تشغيلات توليد",
+    export_jobs_by_version: "مهام تصدير",
+  };
+  return labels[key] || key;
+}
+
 function StatusBadge({ status }: { status: string }) {
   const label =
     status === "published" ? "منشور" :
@@ -110,6 +126,7 @@ export default function TimetableStudioPage() {
   const [compareBaseVersionId, setCompareBaseVersionId] = useState("");
   const [compareTargetVersionId, setCompareTargetVersionId] = useState("");
   const [compareResult, setCompareResult] = useState<Row | null>(null);
+  const [cleanupResult, setCleanupResult] = useState<Row | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -325,6 +342,21 @@ export default function TimetableStudioPage() {
     );
     setCompareResult(result);
   }
+
+  async function runCleanupDryRun() {
+    return action("فحص بيانات الاختبار", async () => {
+      const result = await apiPost("admin/cleanup-smoke-data", {
+        confirm: "DELETE_SMOKE_DATA",
+        dry_run: true,
+      });
+      setCleanupResult(result);
+      return result;
+    });
+  }
+
+  const cleanupCounts = cleanupResult?.counts || {};
+  const cleanupTotal = Object.values(cleanupCounts).reduce((sum: number, value: any) => sum + Number(value || 0), 0);
+
 
 async function exportCsv() {
     return action("تصدير CSV", async () => {
@@ -626,6 +658,49 @@ async function exportCsv() {
               </div>
             </div>
           </>
+        )}
+      </section>
+
+      <section className="surface section-pad mt cleanup-dry-run-panel">
+        <div className="studio-toolbar">
+          <div>
+            <div className="eyebrow">Production Cleanup Dry-Run</div>
+            <h2>فحص بيانات الاختبار قبل تنظيف الإنتاج</h2>
+            <p className="muted">
+              هذه اللوحة لا تحذف أي بيانات. تعرض فقط عدد السجلات التي تحمل علامات اختبار مثل SMOKE / PH3E / PH4B / PH5 / اختبار / تثبيت / Guard.
+            </p>
+          </div>
+          <span className={cleanupTotal > 0 ? "badge warning-badge" : "badge"}>
+            {cleanupResult ? `${cleanupTotal} مرشح تنظيف` : "لم يتم الفحص"}
+          </span>
+        </div>
+
+        <div className="action-row mt-small">
+          <button className="btn" disabled={busy} onClick={runCleanupDryRun}>
+            تشغيل Dry-Run
+          </button>
+          <span className="muted">
+            الحذف الفعلي مقفول من الـ API في هذه المرحلة، ولا يتم تنفيذ إلا dry_run=true.
+          </span>
+        </div>
+
+        {cleanupResult?.counts && (
+          <div className="cleanup-grid mt">
+            {Object.entries(cleanupResult.counts).map(([key, value]) => (
+              <div className="cleanup-card" key={key}>
+                <span>{cleanupLabel(key)}</span>
+                <strong>{String(value)}</strong>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {cleanupResult?.markers && (
+          <div className="cleanup-markers mt-small">
+            {(cleanupResult.markers || []).map((marker: string) => (
+              <span key={marker}>{marker}</span>
+            ))}
+          </div>
         )}
       </section>
 

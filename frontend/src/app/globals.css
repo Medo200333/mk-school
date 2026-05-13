@@ -647,3 +647,64 @@ th {
     break-inside: avoid;
   }
 }
+
+
+/* Phase 6C Cleanup Dry-Run Panel */
+.cleanup-dry-run-panel {
+  border: 1px solid rgba(139, 90, 43, 0.22);
+  overflow: hidden;
+}
+
+.warning-badge {
+  background: rgba(180, 83, 9, 0.14);
+  border-color: rgba(180, 83, 9, 0.35);
+  color: #7c2d12;
+}
+
+.cleanup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.cleanup-card {
+  border: 1px solid rgba(75, 52, 35, 0.12);
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(255, 251, 244, 0.72);
+  box-shadow: 0 10px 22px rgba(66, 44, 22, 0.06);
+}
+
+.cleanup-card span {
+  display: block;
+  color: #7a6652;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.cleanup-card strong {
+  font-size: 28px;
+  line-height: 1;
+  color: #3f2a18;
+}
+
+.cleanup-markers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cleanup-markers span {
+  border: 1px solid rgba(139, 90, 43, 0.18);
+  background: rgba(139, 90, 43, 0.08);
+  color: #5c3d24;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+@media print {
+  .cleanup-dry-run-panel {
+    display: none !important;
+  }
+}
