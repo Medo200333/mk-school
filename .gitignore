@@ -22,3 +22,4 @@ external/
 frontend/.env.local
 *.log
 mk_docker_logs.txt
+import_samples/

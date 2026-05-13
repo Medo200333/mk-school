@@ -600,6 +600,172 @@ def _extract_pascal_strings(data: bytes) -> list[dict[str, Any]]:
     return records
 
 
+
+def _roz_window_text(data: bytes, marker: bytes, radius: int = 420) -> list[dict[str, Any]]:
+    windows: list[dict[str, Any]] = []
+    start = 0
+
+    while True:
+        pos = data.find(marker, start)
+        if pos < 0:
+            break
+
+        left = max(0, pos - radius)
+        right = min(len(data), pos + len(marker) + radius)
+        decoded = _clean_roz_text(_decode_cp1256_chunk(data[left:right]))
+
+        windows.append(
+            {
+                "marker": marker.decode("ascii", errors="ignore"),
+                "offset": pos,
+                "text": decoded[:1800],
+            }
+        )
+        start = pos + len(marker)
+
+    return windows
+
+
+def _meaningful_arabic_records(records: list[dict[str, Any]], limit: int = 160) -> list[dict[str, Any]]:
+    useful: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    noise_tokens = ("ےے", "ززز", "€", "†", "™", "گپ", "ذK", "ثگ", "cp1256")
+    keep_tokens = (
+        "الحصة",
+        "الصف الدراسي",
+        "CLASSTT",
+        "CLASSTT_END",
+        "teacher_row",
+        "class_row",
+        "report_header",
+        "Master",
+        "2024/2025",
+    )
+
+    for row in records:
+        value = _clean_roz_text(str(row.get("text") or ""))
+        if not value:
+            continue
+
+        has_keep = any(token in value for token in keep_tokens)
+        arabic_count = sum(1 for ch in value if "\u0600" <= ch <= "\u06ff")
+        too_noisy = any(token in value for token in noise_tokens) and not has_keep
+
+        if too_noisy:
+            continue
+
+        if not has_keep and arabic_count < 5:
+            continue
+
+        compact = re.sub(r"\s+", " ", value).strip()
+        if compact in seen:
+            continue
+        seen.add(compact)
+
+        useful.append(
+            {
+                "offset": row.get("offset"),
+                "kind": row.get("kind"),
+                "encoding": row.get("encoding"),
+                "length": row.get("length"),
+                "text": value,
+            }
+        )
+
+        if len(useful) >= limit:
+            break
+
+    return useful
+
+
+def _extract_classtt_blocks(data: bytes, limit: int = 40) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    marker = b"CLASSTT"
+    end_marker = b"CLASSTT_END"
+    start = 0
+
+    while len(blocks) < limit:
+        pos = data.find(marker, start)
+        if pos < 0:
+            break
+
+        end = data.find(end_marker, pos)
+        if end < 0:
+            block_end = min(len(data), pos + 1500)
+            closed = False
+        else:
+            block_end = min(len(data), end + len(end_marker) + 260)
+            closed = True
+
+        raw = data[pos:block_end]
+        decoded = _clean_roz_text(_decode_cp1256_chunk(raw))
+        class_refs = sorted(set(re.findall(r"CLASSTT\d+/\d+", decoded)))
+        numeric_refs = sorted(set(re.findall(r"\b\d{1,2}/\d{1,2}\b", decoded)))
+
+        blocks.append(
+            {
+                "offset": pos,
+                "closed": closed,
+                "byte_length": len(raw),
+                "class_refs": class_refs,
+                "numeric_refs": numeric_refs,
+                "text_preview": decoded[:1400],
+            }
+        )
+        start = pos + len(marker)
+
+    return blocks
+
+
+def _build_roz_semantic_preview(data: bytes, records: list[dict[str, Any]]) -> dict[str, Any]:
+    text_blob = "\n".join(str(row.get("text") or "") for row in records)
+
+    period_labels = sorted(
+        {
+            _clean_roz_text(value)
+            for value in re.findall(r"الحصة\s+[اأإآء-ي]+", text_blob)
+            if "\n" not in value
+        }
+    )
+
+    class_labels = sorted(
+        set(re.findall(r"الصف\s+الدراسي\s+\d+", text_blob)),
+        key=lambda x: int(re.search(r"\d+", x).group(0)) if re.search(r"\d+", x) else 999,
+    )
+
+    marker_windows = []
+    for marker in (
+        b"ASCTT",
+        b"CLASSTT",
+        b"teacher_row1",
+        b"teacher_row2",
+        b"teacher2_row1",
+        b"teacher2_row2",
+        b"class_row1",
+        b"class_row2",
+        b"class_row3",
+        b"report_header",
+        b"Master",
+    ):
+        marker_windows.extend(_roz_window_text(data, marker, radius=320)[:4])
+
+    return {
+        "academic_years": sorted(set(re.findall(r"20\d{2}/20\d{2}", text_blob))),
+        "period_labels": period_labels,
+        "class_labels": class_labels,
+        "class_timetable_blocks": _extract_classtt_blocks(data),
+        "marker_windows": marker_windows,
+        "meaningful_records": _meaningful_arabic_records(records),
+        "interpretation_ar": [
+            "تم تأكيد أن الملف يحتوي بنية ASCTT/ROZ ثنائية وليست CSV أو SQLite.",
+            "تم العثور على جداول فصول بعلامات CLASSTT/CLASSTT_END.",
+            "تم العثور على قوالب صفوف التقرير الخاصة بالفصول والمعلمين.",
+            "تم استخراج السنة الدراسية والحصص والصفوف كنصوص قابلة للمراجعة.",
+            "هذه المرحلة لا تكفي للاستيراد النهائي؛ لكنها تؤسس خريطة فك الترميز قبل تحويل الجداول إلى Slots.",
+        ],
+    }
+
 def parse_asctt_roz_bytes(data: bytes, max_records: int = 800) -> dict[str, Any]:
     all_records = _extract_ascii_runs(data) + _extract_cp1256_runs(data) + _extract_pascal_strings(data)
 
@@ -651,6 +817,7 @@ def parse_asctt_roz_bytes(data: bytes, max_records: int = 800) -> dict[str, Any]
             "classes": classes,
             "class_timetable_markers": class_tt,
         },
+        "semantic_preview": _build_roz_semantic_preview(data, records),
         "records": interesting,
         "notes_ar": [
             "هذه المرحلة قراءة وتحليل فقط ولا تقوم بأي إدخال في قاعدة البيانات.",
