@@ -1426,6 +1426,320 @@ async def inspect_asctt_roz_file(
 
 
 
+class RozEntityImportPayload(BaseModel):
+    file_path: str = "import_samples/mmmmmmmmmmm2-2.roz"
+    max_records: int = 300
+    dry_run: bool = True
+    execute_confirm: str | None = None
+
+
+def _roz_code_token(value: str, fallback: str) -> str:
+    ascii_part = re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-").upper()
+    if ascii_part:
+        return ascii_part[:40]
+    return fallback
+
+
+def _roz_entity_code(prefix: str, index: int, name: str) -> str:
+    digest = hashlib.sha1(name.encode("utf-8")).hexdigest()[:8].upper()
+    return f"{prefix}-{index:03d}-{digest}"
+
+
+async def _existing_teacher_by_name(db: AsyncSession, name: str) -> Any:
+    result = await db.execute(
+        text("""
+            SELECT id, teacher_code, teacher_name_ar
+            FROM school.teachers
+            WHERE teacher_name_ar = :name
+            LIMIT 1
+        """),
+        {"name": name},
+    )
+    row = result.first()
+    return row._mapping if row else None
+
+
+async def _existing_subject_by_name(db: AsyncSession, name: str) -> Any:
+    result = await db.execute(
+        text("""
+            SELECT id, subject_code, subject_name_ar
+            FROM school.subjects
+            WHERE subject_name_ar = :name
+            LIMIT 1
+        """),
+        {"name": name},
+    )
+    row = result.first()
+    return row._mapping if row else None
+
+
+async def _existing_class_by_name(db: AsyncSession, name: str) -> Any:
+    result = await db.execute(
+        text("""
+            SELECT id, class_code, class_name_ar
+            FROM school.school_classes
+            WHERE class_name_ar = :name OR class_code = :name
+            LIMIT 1
+        """),
+        {"name": name},
+    )
+    row = result.first()
+    return row._mapping if row else None
+
+
+async def _insert_roz_teacher(db: AsyncSession, index: int, name: str) -> Any:
+    result = await db.execute(
+        text("""
+            INSERT INTO school.teachers(teacher_code, teacher_name_ar, specialization)
+            VALUES (:code, :name, :specialization)
+            ON CONFLICT (teacher_code)
+            DO UPDATE SET teacher_name_ar = EXCLUDED.teacher_name_ar
+            RETURNING id, teacher_code, teacher_name_ar
+        """),
+        {
+            "code": _roz_entity_code("ROZ-T", index, name),
+            "name": name,
+            "specialization": "ROZ/ASCTT import",
+        },
+    )
+    return result.one()._mapping
+
+
+async def _insert_roz_subject(db: AsyncSession, index: int, name: str) -> Any:
+    result = await db.execute(
+        text("""
+            INSERT INTO school.subjects(subject_code, subject_name_ar, color_code)
+            VALUES (:code, :name, :color_code)
+            ON CONFLICT (subject_code)
+            DO UPDATE SET subject_name_ar = EXCLUDED.subject_name_ar
+            RETURNING id, subject_code, subject_name_ar
+        """),
+        {
+            "code": _roz_entity_code("ROZ-S", index, name),
+            "name": name,
+            "color_code": "#8b5a2b",
+        },
+    )
+    return result.one()._mapping
+
+
+async def _insert_roz_class(db: AsyncSession, index: int, name: str) -> Any:
+    number_match = re.search(r"\d+", name)
+    if number_match:
+        code = f"ROZ-CLASS-{int(number_match.group(0)):02d}"
+    else:
+        code = _roz_entity_code("ROZ-C", index, name)
+
+    result = await db.execute(
+        text("""
+            INSERT INTO school.school_classes(class_code, class_name_ar, stage_name_ar, grade_name_ar)
+            VALUES (:code, :name, :stage_name_ar, :grade_name_ar)
+            ON CONFLICT (class_code)
+            DO UPDATE SET class_name_ar = EXCLUDED.class_name_ar
+            RETURNING id, class_code, class_name_ar
+        """),
+        {
+            "code": code,
+            "name": name,
+            "stage_name_ar": "مستورد من ROZ",
+            "grade_name_ar": name,
+        },
+    )
+    return result.one()._mapping
+
+
+async def _build_roz_entity_import_plan(
+    db: AsyncSession,
+    parsed: dict[str, Any],
+    *,
+    execute: bool,
+) -> dict[str, Any]:
+    canonical = (
+        parsed.get("semantic_preview", {})
+        .get("structured_entities", {})
+        .get("canonical_entities", {})
+    )
+
+    teachers = list(canonical.get("teachers") or [])
+    subjects = list(canonical.get("subjects") or [])
+    classes = list(parsed.get("semantic_preview", {}).get("class_labels") or [])
+
+    teacher_rows: list[dict[str, Any]] = []
+    subject_rows: list[dict[str, Any]] = []
+    class_rows: list[dict[str, Any]] = []
+
+    created_teachers = 0
+    created_subjects = 0
+    created_classes = 0
+
+    for index, row in enumerate(teachers, start=1):
+        name = str(row.get("teacher_name_ar") or "").strip()
+        if not name:
+            continue
+
+        existing = await _existing_teacher_by_name(db, name)
+        if existing:
+            teacher_rows.append({
+                "teacher_name_ar": name,
+                "action": "match_existing",
+                "id": str(existing["id"]),
+                "teacher_code": existing.get("teacher_code"),
+            })
+            continue
+
+        if execute:
+            created = await _insert_roz_teacher(db, index, name)
+            created_teachers += 1
+            teacher_rows.append({
+                "teacher_name_ar": name,
+                "action": "created",
+                "id": str(created["id"]),
+                "teacher_code": created.get("teacher_code"),
+            })
+        else:
+            teacher_rows.append({
+                "teacher_name_ar": name,
+                "action": "would_create",
+                "teacher_code": _roz_entity_code("ROZ-T", index, name),
+            })
+
+    for index, row in enumerate(subjects, start=1):
+        name = str(row.get("subject_name_ar") or "").strip()
+        if not name:
+            continue
+
+        existing = await _existing_subject_by_name(db, name)
+        if existing:
+            subject_rows.append({
+                "subject_name_ar": name,
+                "action": "match_existing",
+                "id": str(existing["id"]),
+                "subject_code": existing.get("subject_code"),
+            })
+            continue
+
+        if execute:
+            created = await _insert_roz_subject(db, index, name)
+            created_subjects += 1
+            subject_rows.append({
+                "subject_name_ar": name,
+                "action": "created",
+                "id": str(created["id"]),
+                "subject_code": created.get("subject_code"),
+            })
+        else:
+            subject_rows.append({
+                "subject_name_ar": name,
+                "action": "would_create",
+                "subject_code": _roz_entity_code("ROZ-S", index, name),
+            })
+
+    for index, name_value in enumerate(classes, start=1):
+        name = str(name_value or "").strip()
+        if not name:
+            continue
+
+        existing = await _existing_class_by_name(db, name)
+        if existing:
+            class_rows.append({
+                "class_name_ar": name,
+                "action": "match_existing",
+                "id": str(existing["id"]),
+                "class_code": existing.get("class_code"),
+            })
+            continue
+
+        number_match = re.search(r"\d+", name)
+        class_code = f"ROZ-CLASS-{int(number_match.group(0)):02d}" if number_match else _roz_entity_code("ROZ-C", index, name)
+
+        if execute:
+            created = await _insert_roz_class(db, index, name)
+            created_classes += 1
+            class_rows.append({
+                "class_name_ar": name,
+                "action": "created",
+                "id": str(created["id"]),
+                "class_code": created.get("class_code"),
+            })
+        else:
+            class_rows.append({
+                "class_name_ar": name,
+                "action": "would_create",
+                "class_code": class_code,
+            })
+
+    return {
+        "mode": "execute" if execute else "dry_run",
+        "safe_to_import_slots": False,
+        "teachers": teacher_rows,
+        "subjects": subject_rows,
+        "classes": class_rows,
+        "counts": {
+            "teachers_total": len(teacher_rows),
+            "subjects_total": len(subject_rows),
+            "classes_total": len(class_rows),
+            "teachers_created": created_teachers,
+            "subjects_created": created_subjects,
+            "classes_created": created_classes,
+            "teachers_would_create": sum(1 for x in teacher_rows if x["action"] == "would_create"),
+            "subjects_would_create": sum(1 for x in subject_rows if x["action"] == "would_create"),
+            "classes_would_create": sum(1 for x in class_rows if x["action"] == "would_create"),
+            "teachers_existing": sum(1 for x in teacher_rows if x["action"] == "match_existing"),
+            "subjects_existing": sum(1 for x in subject_rows if x["action"] == "match_existing"),
+            "classes_existing": sum(1 for x in class_rows if x["action"] == "match_existing"),
+        },
+        "notes_ar": [
+            "هذا endpoint يستورد الكيانات فقط: مدرسين ومواد وفصول.",
+            "استيراد خانات الجدول timetable_slots ممنوع في هذه المرحلة.",
+            "الوضع الافتراضي dry_run ولا يحدث أي كتابة في قاعدة البيانات.",
+            "التنفيذ الفعلي يتطلب dry_run=false و execute_confirm=IMPORT_ROZ_ENTITIES_ONLY.",
+        ],
+    }
+
+
+@router.post("/import/asctt-roz/entities")
+async def import_asctt_roz_entities(
+    payload: RozEntityImportPayload,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    source_path = _safe_import_sample_path(payload.file_path)
+    data = source_path.read_bytes()
+    parsed = parse_asctt_roz_bytes(data, payload.max_records)
+
+    execute = not payload.dry_run
+    if execute and payload.execute_confirm != "IMPORT_ROZ_ENTITIES_ONLY":
+        raise HTTPException(
+            status_code=409,
+            detail="تنفيذ استيراد كيانات ROZ يتطلب execute_confirm=IMPORT_ROZ_ENTITIES_ONLY",
+        )
+
+    plan = await _build_roz_entity_import_plan(db, parsed, execute=execute)
+
+    if execute:
+        await audit_event(
+            db,
+            "import_roz_entities",
+            "school_timetable_roz_entities",
+            payload={
+                "file_name": source_path.name,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "counts": plan["counts"],
+            },
+        )
+        await db.commit()
+    else:
+        await db.rollback()
+
+    return {
+        "file_name": source_path.name,
+        "file_size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "dry_run": payload.dry_run,
+        "safe_to_import_slots": False,
+        **plan,
+    }
+
+
 @router.post("/import/time-table-csv")
 async def import_time_table_csv(
     payload: TimetableCsvImport,
