@@ -151,6 +151,27 @@ type RozInspectResult = {
   };
 };
 
+type RozEntityImportRow = {
+  action?: string;
+  id?: string;
+  teacher_name_ar?: string;
+  subject_name_ar?: string;
+  class_name_ar?: string;
+  teacher_code?: string;
+  subject_code?: string;
+  class_code?: string;
+};
+
+type RozEntityImportResult = {
+  mode?: string;
+  safe_to_import_slots?: boolean;
+  counts?: Record<string, number>;
+  teachers?: RozEntityImportRow[];
+  subjects?: RozEntityImportRow[];
+  classes?: RozEntityImportRow[];
+  notes_ar?: string[];
+};
+
 export default function TimetableStudioPage() {
   const [summary, setSummary] = useState<Row | null>(null);
   const [readiness, setReadiness] = useState<Row | null>(null);
@@ -183,6 +204,8 @@ export default function TimetableStudioPage() {
   const [fileName, setFileName] = useState("");
   const [rozFilePath, setRozFilePath] = useState("import_samples/mmmmmmmmmmm2-2.roz");
   const [rozPreview, setRozPreview] = useState<RozInspectResult | null>(null);
+  const [rozEntityImportPlan, setRozEntityImportPlan] = useState<RozEntityImportResult | null>(null);
+  const [rozExecuteConfirm, setRozExecuteConfirm] = useState("");
 
   const [subjectForm, setSubjectForm] = useState({ subject_code: "", subject_name_ar: "", color_code: "#8b5a2b" });
   const [teacherForm, setTeacherForm] = useState({ teacher_code: "", teacher_name_ar: "", phone: "", specialization: "" });
@@ -417,6 +440,31 @@ export default function TimetableStudioPage() {
         max_records: 300,
       });
       setRozPreview(result);
+      setRozEntityImportPlan(null);
+    });
+  }
+
+  async function previewRozEntityImport() {
+    await action("معاينة استيراد كيانات ROZ", async () => {
+      const result = await apiPost("import/asctt-roz/entities", {
+        file_path: rozFilePath || "import_samples/mmmmmmmmmmm2-2.roz",
+        max_records: 300,
+        dry_run: true,
+      });
+      setRozEntityImportPlan(result);
+    });
+  }
+
+  async function executeRozEntityImport() {
+    await action("تنفيذ استيراد كيانات ROZ", async () => {
+      const result = await apiPost("import/asctt-roz/entities", {
+        file_path: rozFilePath || "import_samples/mmmmmmmmmmm2-2.roz",
+        max_records: 300,
+        dry_run: false,
+        execute_confirm: rozExecuteConfirm,
+      });
+      setRozEntityImportPlan(result);
+      return result;
     });
   }
 
@@ -973,6 +1021,87 @@ async function exportCsv() {
               </details>
             </div>
           ) : null}
+
+          <div className="roz-entity-import-panel mt-small">
+            <div className="roz-preview-head">
+              <div>
+                <strong>استيراد كيانات ROZ الآمن</strong>
+                <small>ينشئ المدرسين والمواد والفصول فقط. لا يستورد الحصص أو الخانات.</small>
+              </div>
+              <span className="status-approved">Guarded</span>
+            </div>
+
+            <div className="action-row">
+              <button className="btn btn-secondary" disabled={busy || !rozFilePath.trim()} onClick={previewRozEntityImport}>
+                Dry Run للكيانات
+              </button>
+              <input
+                className="input"
+                value={rozExecuteConfirm}
+                onChange={(e) => setRozExecuteConfirm(e.target.value)}
+                placeholder="اكتب IMPORT_ROZ_ENTITIES_ONLY للتنفيذ"
+              />
+              <button
+                className="btn"
+                disabled={busy || rozExecuteConfirm !== "IMPORT_ROZ_ENTITIES_ONLY"}
+                onClick={executeRozEntityImport}
+              >
+                تنفيذ استيراد الكيانات فقط
+              </button>
+            </div>
+
+            {rozEntityImportPlan ? (
+              <div className="mt-small">
+                <div className="roz-preview-metrics">
+                  <span>الوضع: {rozEntityImportPlan.mode || "dry_run"}</span>
+                  <span>مدرسون: {rozEntityImportPlan.counts?.teachers_total || 0}</span>
+                  <span>مواد: {rozEntityImportPlan.counts?.subjects_total || 0}</span>
+                  <span>فصول: {rozEntityImportPlan.counts?.classes_total || 0}</span>
+                  <span>سيتم إنشاء مدرسين: {rozEntityImportPlan.counts?.teachers_would_create || rozEntityImportPlan.counts?.teachers_created || 0}</span>
+                  <span>استيراد الحصص: {rozEntityImportPlan.safe_to_import_slots ? "مسموح" : "ممنوع الآن"}</span>
+                </div>
+
+                <div className="roz-import-tables">
+                  <SmallTable
+                    rows={(rozEntityImportPlan.teachers || []).slice(0, 15)}
+                    empty="لا توجد خطة مدرسين"
+                    columns={[
+                      { key: "action", label: "الإجراء" },
+                      { key: "teacher_name_ar", label: "المدرس" },
+                      { key: "teacher_code", label: "الكود" },
+                    ]}
+                  />
+                  <SmallTable
+                    rows={(rozEntityImportPlan.subjects || []).slice(0, 15)}
+                    empty="لا توجد خطة مواد"
+                    columns={[
+                      { key: "action", label: "الإجراء" },
+                      { key: "subject_name_ar", label: "المادة" },
+                      { key: "subject_code", label: "الكود" },
+                    ]}
+                  />
+                  <SmallTable
+                    rows={(rozEntityImportPlan.classes || []).slice(0, 20)}
+                    empty="لا توجد خطة فصول"
+                    columns={[
+                      { key: "action", label: "الإجراء" },
+                      { key: "class_name_ar", label: "الفصل" },
+                      { key: "class_code", label: "الكود" },
+                    ]}
+                  />
+                </div>
+
+                <details className="mt-small">
+                  <summary>ملاحظات تنفيذ الاستيراد</summary>
+                  <ul>
+                    {(rozEntityImportPlan.notes_ar || []).map((note) => (
+                      <li key={note}>{note}</li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+            ) : null}
+          </div>
 
           <div className="mt">
             <h3>استيراد CSV التقليدي</h3>

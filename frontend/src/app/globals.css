@@ -844,3 +844,31 @@ th {
   }
 }
 
+
+
+.roz-entity-import-panel {
+  border: 1px solid rgba(92, 60, 30, 0.16);
+  border-radius: 18px;
+  padding: 16px;
+  margin-top: 14px;
+  background: rgba(255, 248, 235, 0.68);
+}
+
+.roz-entity-import-panel .action-row {
+  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(160px, auto) minmax(220px, 1fr) minmax(190px, auto);
+  gap: 10px;
+}
+
+.roz-import-tables {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 860px) {
+  .roz-entity-import-panel .action-row {
+    grid-template-columns: 1fr;
+  }
+}
