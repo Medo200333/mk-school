@@ -228,7 +228,213 @@ async def grid(
             ORDER BY day_order, period_no, class_code
             LIMIT 2000
         """))
+
     return rows(result)
+
+
+def _weekly_board_json_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _weekly_board_json_row(row: Any) -> dict[str, Any]:
+    mapping = row._mapping if hasattr(row, "_mapping") else row
+    return {str(key): _weekly_board_json_value(value) for key, value in dict(mapping).items()}
+
+
+@router.get("/weekly-board")
+async def weekly_board(
+    version_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    if version_id:
+        version_result = await db.execute(
+            text("""
+                SELECT id, name_ar, status, is_current, effective_from, effective_to, created_at
+                FROM school.timetable_versions
+                WHERE id = CAST(:version_id AS uuid)
+                LIMIT 1
+            """),
+            {"version_id": version_id},
+        )
+    else:
+        version_result = await db.execute(text("""
+            SELECT id, name_ar, status, is_current, effective_from, effective_to, created_at
+            FROM school.timetable_versions
+            WHERE is_current = true
+            ORDER BY created_at DESC
+            LIMIT 1
+        """))
+
+    version_row = version_result.first()
+    if version_row is None:
+        raise HTTPException(status_code=404, detail="نسخة الجدول غير موجودة")
+
+    version = _weekly_board_json_row(version_row)
+    selected_version_id = str(version["id"])
+
+    days_result = await db.execute(text("""
+        SELECT id, day_code, name_ar, sort_order
+        FROM school.week_days
+        ORDER BY sort_order
+    """))
+
+    periods_result = await db.execute(text("""
+        SELECT id, period_no, name_ar, starts_at, ends_at, is_break, is_active
+        FROM school.lesson_periods
+        WHERE is_active = true
+        ORDER BY period_no
+    """))
+
+    classes_result = await db.execute(text("""
+        SELECT id, class_code, class_name_ar, stage_name_ar, grade_name_ar, capacity
+        FROM school.school_classes
+        WHERE is_active = true
+        ORDER BY class_code
+    """))
+
+    slots_result = await db.execute(
+        text("""
+            SELECT
+              ts.id AS slot_id,
+              ts.timetable_version_id,
+              ts.school_class_id,
+              ts.week_day_id,
+              ts.period_id,
+              ts.subject_name_ar,
+              COALESCE(sub.color_code, '#8b5a2b') AS subject_color,
+              ts.teacher_id,
+              tea.teacher_code,
+              tea.teacher_name_ar,
+              ts.classroom_id,
+              COALESCE(room.room_name_ar, room.name_ar) AS room_name_ar,
+              ts.slot_type,
+              ts.notes
+            FROM school.timetable_slots ts
+            LEFT JOIN school.subjects sub ON sub.subject_name_ar = ts.subject_name_ar
+            LEFT JOIN school.teachers tea ON tea.id = ts.teacher_id
+            LEFT JOIN school.classrooms room ON room.id = ts.classroom_id
+            WHERE ts.timetable_version_id = CAST(:version_id AS uuid)
+            ORDER BY ts.week_day_id, ts.period_id, ts.school_class_id
+        """),
+        {"version_id": selected_version_id},
+    )
+
+    days = [_weekly_board_json_row(row) for row in days_result]
+    periods = [_weekly_board_json_row(row) for row in periods_result]
+    classes = [_weekly_board_json_row(row) for row in classes_result]
+    slots = [_weekly_board_json_row(row) for row in slots_result]
+
+    slot_by_key: dict[tuple[str, int, str], dict[str, Any]] = {}
+    for slot in slots:
+        key = (
+            str(slot["school_class_id"]),
+            int(slot["week_day_id"]),
+            str(slot["period_id"]),
+        )
+        slot_by_key[key] = slot
+
+    cells: list[dict[str, Any]] = []
+    matrix: dict[str, dict[str, dict[str, dict[str, Any]]]] = {}
+
+    for class_row in classes:
+        class_id = str(class_row["id"])
+        matrix[class_id] = {}
+
+        for day in days:
+            day_id = int(day["id"])
+            day_key = str(day_id)
+            matrix[class_id][day_key] = {}
+
+            for period in periods:
+                period_id = str(period["id"])
+                slot = slot_by_key.get((class_id, day_id, period_id))
+
+                cell = {
+                    "school_class_id": class_id,
+                    "class_code": class_row.get("class_code"),
+                    "class_name_ar": class_row.get("class_name_ar"),
+                    "stage_name_ar": class_row.get("stage_name_ar"),
+                    "grade_name_ar": class_row.get("grade_name_ar"),
+                    "week_day_id": day_id,
+                    "day_code": day.get("day_code"),
+                    "day_name_ar": day.get("name_ar"),
+                    "day_order": day.get("sort_order"),
+                    "period_id": period_id,
+                    "period_no": period.get("period_no"),
+                    "period_name_ar": period.get("name_ar"),
+                    "starts_at": period.get("starts_at"),
+                    "ends_at": period.get("ends_at"),
+                    "is_break": period.get("is_break"),
+                    "slot_id": None,
+                    "subject_name_ar": None,
+                    "subject_color": None,
+                    "teacher_id": None,
+                    "teacher_code": None,
+                    "teacher_name_ar": None,
+                    "classroom_id": None,
+                    "room_name_ar": None,
+                    "slot_type": "free",
+                    "notes": None,
+                    "is_empty": True,
+                }
+
+                if slot:
+                    cell.update(
+                        {
+                            "slot_id": slot.get("slot_id"),
+                            "subject_name_ar": slot.get("subject_name_ar"),
+                            "subject_color": slot.get("subject_color"),
+                            "teacher_id": slot.get("teacher_id"),
+                            "teacher_code": slot.get("teacher_code"),
+                            "teacher_name_ar": slot.get("teacher_name_ar"),
+                            "classroom_id": slot.get("classroom_id"),
+                            "room_name_ar": slot.get("room_name_ar"),
+                            "slot_type": slot.get("slot_type") or "lesson",
+                            "notes": slot.get("notes"),
+                            "is_empty": False,
+                        }
+                    )
+
+                cells.append(cell)
+                matrix[class_id][day_key][period_id] = cell
+
+    total_cells = len(cells)
+    filled_cells = sum(1 for cell in cells if not cell["is_empty"])
+    empty_cells = total_cells - filled_cells
+
+    return {
+        "version": version,
+        "days": days,
+        "periods": periods,
+        "classes": classes,
+        "cells": cells,
+        "matrix": matrix,
+        "counts": {
+            "classes": len(classes),
+            "days": len(days),
+            "periods": len(periods),
+            "slots": filled_cells,
+            "empty_cells": empty_cells,
+            "total_cells": total_cells,
+        },
+        "safe_to_print": bool(classes and days and periods),
+        "source": {
+            "table": "school.timetable_slots",
+            "subject_contract": "subject_name_ar",
+            "read_only": True,
+            "slot_import_from_roz": False,
+        },
+        "notes_ar": [
+            "هذا endpoint قراءة فقط ولا يغير قاعدة البيانات.",
+            "مصدر الحقيقة هو school.timetable_slots.",
+            "جدول الحصص الحالي يعتمد على subject_name_ar لأن timetable_slots لا يحتوي subject_id.",
+            "استيراد خانات ROZ ما زال ممنوعًا حتى يثبت ربط CLASSTT بالأيام والحصص والمدرسين.",
+        ],
+    }
 
 
 @router.get("/teacher-load")
