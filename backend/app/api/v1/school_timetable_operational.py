@@ -628,6 +628,106 @@ async def import_time_table_csv(
         raise HTTPException(status_code=500, detail=f"فشل استيراد TimeTable: {exc}") from exc
 
 
+class SmokeCleanupPayload(BaseModel):
+    confirm: str
+    dry_run: bool = True
+
+
+SMOKE_MARKERS = [
+    "SMOKE",
+    "PH3E",
+    "PH4B",
+    "PH5",
+    "Phase3",
+    "Phase4",
+    "Phase5",
+    "اختبار",
+    "تثبيت",
+    "Guard",
+]
+
+
+def smoke_like_sql(*columns: str) -> str:
+    parts: list[str] = []
+    for column in columns:
+        for index, _marker in enumerate(SMOKE_MARKERS):
+            parts.append(f"COALESCE({column}, '') ILIKE :marker_{index}")
+    return " OR ".join(parts) if parts else "false"
+
+
+def smoke_marker_params() -> dict[str, str]:
+    return {f"marker_{index}": f"%{marker}%" for index, marker in enumerate(SMOKE_MARKERS)}
+
+
+@router.post("/admin/cleanup-smoke-data")
+async def cleanup_smoke_data(
+    payload: SmokeCleanupPayload,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    if payload.confirm != "DELETE_SMOKE_DATA":
+        raise HTTPException(
+            status_code=400,
+            detail="عملية تنظيف بيانات الاختبار تتطلب confirm=DELETE_SMOKE_DATA",
+        )
+
+    params = smoke_marker_params()
+
+    version_where = smoke_like_sql("name_ar", "status")
+    version_join_where = smoke_like_sql("tv.name_ar", "tv.status")
+    teacher_where = smoke_like_sql("teacher_code", "teacher_name_ar", "specialization")
+    subject_where = smoke_like_sql("subject_code", "subject_name_ar")
+    class_where = smoke_like_sql("class_code", "class_name_ar", "stage_name_ar", "grade_name_ar")
+    classroom_where = smoke_like_sql("room_code", "room_name_ar", "name_ar", "floor_name")
+    constraint_where = smoke_like_sql("rule_code", "target_scope", "constraint_type")
+    slot_where = smoke_like_sql("subject_name_ar", "notes")
+
+    counts: dict[str, int] = {}
+
+    async def count_query(name: str, sql: str) -> None:
+        result = await db.execute(text(sql), params)
+        counts[name] = int(result.scalar_one())
+
+    await count_query("teachers", f"SELECT count(*) FROM school.teachers WHERE {teacher_where}")
+    await count_query("subjects", f"SELECT count(*) FROM school.subjects WHERE {subject_where}")
+    await count_query("classes", f"SELECT count(*) FROM school.school_classes WHERE {class_where}")
+    await count_query("classrooms", f"SELECT count(*) FROM school.classrooms WHERE {classroom_where}")
+    await count_query("constraints", f"SELECT count(*) FROM school.timetable_constraints WHERE {constraint_where}")
+    await count_query("versions", f"SELECT count(*) FROM school.timetable_versions WHERE {version_where}")
+    await count_query("slots_by_content", f"SELECT count(*) FROM school.timetable_slots WHERE {slot_where}")
+    await count_query("slots_by_version", f"""
+        SELECT count(*)
+        FROM school.timetable_slots slot
+        JOIN school.timetable_versions tv ON tv.id = slot.timetable_version_id
+        WHERE {version_join_where}
+    """)
+    await count_query("generation_runs_by_version", f"""
+        SELECT count(*)
+        FROM school.timetable_generation_runs run
+        JOIN school.timetable_versions tv ON tv.id = run.timetable_version_id
+        WHERE {version_join_where}
+    """)
+    await count_query("export_jobs_by_version", f"""
+        SELECT count(*)
+        FROM school.timetable_export_jobs job
+        JOIN school.timetable_versions tv ON tv.id = job.timetable_version_id
+        WHERE {version_join_where}
+    """)
+
+    if not payload.dry_run:
+        raise HTTPException(
+            status_code=409,
+            detail="هذا الإصدار يدعم dry_run فقط. سيتم تنفيذ الحذف الفعلي في مرحلة منفصلة بعد مراجعة الأعداد.",
+        )
+
+    return {
+        "dry_run": True,
+        "deleted": False,
+        "counts": counts,
+        "markers": SMOKE_MARKERS,
+    }
+
+
+
 @router.get("/teachers")
 async def list_teachers(db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
     result = await db.execute(text("""
