@@ -62,6 +62,11 @@ function cleanupLabel(key: string) {
   return labels[key] || key;
 }
 
+function cleanupPreviewText(value: any) {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
+
 function StatusBadge({ status }: { status: string }) {
   const label =
     status === "published" ? "منشور" :
@@ -356,6 +361,8 @@ export default function TimetableStudioPage() {
 
   const cleanupCounts = cleanupResult?.counts || {};
   const cleanupTotal = Object.values(cleanupCounts).reduce((sum: number, value: any) => sum + Number(value || 0), 0);
+  const cleanupPreview = cleanupResult?.preview || {};
+  const cleanupPreviewSections = Object.entries(cleanupPreview).filter(([, rows]: [string, any]) => Array.isArray(rows) && rows.length > 0);
 
 
 async function exportCsv() {
@@ -692,6 +699,40 @@ async function exportCsv() {
                 <strong>{String(value)}</strong>
               </div>
             ))}
+          </div>
+        )}
+
+        {cleanupPreviewSections.length > 0 && (
+          <div className="cleanup-preview mt">
+            <div className="studio-toolbar">
+              <div>
+                <h3>معاينة السجلات المرشحة</h3>
+                <p className="muted">
+                  عرض أسماء وأكواد وعينات من السجلات التي يطابقها فحص التنظيف. هذه المعاينة لا تنفذ حذفًا.
+                </p>
+              </div>
+              <span className="badge warning-badge">
+                Preview
+              </span>
+            </div>
+
+            <div className="cleanup-preview-grid mt-small">
+              {cleanupPreviewSections.map(([sectionKey, rows]: [string, any]) => (
+                <div className="cleanup-preview-section" key={sectionKey}>
+                  <h4>{cleanupLabel(sectionKey)} · {rows.length}</h4>
+                  <div className="cleanup-preview-list">
+                    {rows.slice(0, 8).map((row: Row, index: number) => (
+                      <div className="cleanup-preview-row" key={row.id || `${sectionKey}-${index}`}>
+                        <strong>{cleanupPreviewText(row.name)}</strong>
+                        <span>{cleanupPreviewText(row.code)}</span>
+                        <small>{cleanupPreviewText(row.extra)}</small>
+                        <code>{cleanupPreviewText(row.id)}</code>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
