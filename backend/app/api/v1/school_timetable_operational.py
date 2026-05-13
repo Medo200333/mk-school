@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
+import re
 from uuid import UUID
 from decimal import Decimal
 from datetime import date, datetime, time
@@ -14,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from pathlib import Path
 
 router = APIRouter(prefix="/api/v1/school-timetable", tags=["school-timetable"])
 
@@ -438,6 +441,243 @@ async def get_or_create_room(db: AsyncSession, room_name: str) -> Any:
         {"code": room_name, "name": room_name},
     )
     return created.one()._mapping["id"]
+
+
+
+class RozInspectPayload(BaseModel):
+    file_path: str = "import_samples/mmmmmmmmmmm2-2.roz"
+    max_records: int = 800
+
+
+def _safe_import_sample_path(raw_path: str) -> Path:
+    root = Path.cwd().resolve()
+    import_root = (root / "import_samples").resolve()
+    requested = Path(raw_path)
+
+    if not requested.is_absolute():
+        requested = root / requested
+
+    resolved = requested.resolve()
+
+    if import_root not in resolved.parents and resolved != import_root:
+        raise HTTPException(
+            status_code=400,
+            detail="مسموح بقراءة ملفات ROZ فقط من مجلد import_samples داخل المشروع",
+        )
+
+    if not resolved.exists() or not resolved.is_file():
+        raise HTTPException(status_code=404, detail=f"ملف ROZ غير موجود: {raw_path}")
+
+    if resolved.suffix.lower() != ".roz":
+        raise HTTPException(status_code=400, detail="الملف المطلوب ليس بصيغة .roz")
+
+    return resolved
+
+
+def _decode_cp1256_chunk(chunk: bytes) -> str:
+    return chunk.decode("cp1256", errors="ignore").replace("\x00", "").strip()
+
+
+def _clean_roz_text(value: str) -> str:
+    value = value.replace("\r", "\n")
+    value = re.sub(r"[ے]{3,}", "", value)
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]+", " ", value)
+    value = re.sub(r"[ \t]+", " ", value)
+    value = re.sub(r"\n+", "\n", value)
+    return value.strip()
+
+
+def _interesting_roz_text(value: str) -> bool:
+    if not value:
+        return False
+    if len(value) < 2:
+        return False
+
+    markers = (
+        "ASCTT",
+        "CLASSTT",
+        "CLASSTT_END",
+        "teacher_row",
+        "class_row",
+        "report_header",
+        "Master",
+        "الحصة",
+        "الصف",
+        "الدراسي",
+        "2024/2025",
+    )
+    if any(marker in value for marker in markers):
+        return True
+
+    arabic_chars = sum(1 for ch in value if "\u0600" <= ch <= "\u06ff")
+    return arabic_chars >= 3
+
+
+def _extract_ascii_runs(data: bytes) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    pattern = re.compile(rb"[\x20-\x7e]{3,}")
+    for match in pattern.finditer(data):
+        raw = match.group(0)
+        text_value = raw.decode("ascii", errors="ignore").strip()
+        if _interesting_roz_text(text_value):
+            records.append(
+                {
+                    "offset": match.start(),
+                    "kind": "ascii_run",
+                    "encoding": "ascii",
+                    "length": len(raw),
+                    "text": text_value,
+                }
+            )
+    return records
+
+
+def _extract_cp1256_runs(data: bytes) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    current = bytearray()
+    start = 0
+
+    def flush(end: int) -> None:
+        nonlocal current, start
+        if len(current) >= 3:
+            decoded = _clean_roz_text(_decode_cp1256_chunk(bytes(current)))
+            if _interesting_roz_text(decoded):
+                records.append(
+                    {
+                        "offset": start,
+                        "kind": "cp1256_run",
+                        "encoding": "cp1256",
+                        "length": len(current),
+                        "text": decoded,
+                    }
+                )
+        current = bytearray()
+
+    for index, byte in enumerate(data):
+        is_textish = (
+            byte in (9, 10, 13)
+            or 32 <= byte <= 126
+            or 0xC1 <= byte <= 0xFF
+            or byte in (0x80, 0x81, 0x8A, 0x8C, 0x8D, 0x8E, 0x90, 0x98, 0x9A, 0x9C, 0x9D, 0x9E)
+        )
+        if is_textish:
+            if not current:
+                start = index
+            current.append(byte)
+        else:
+            flush(index)
+
+    flush(len(data))
+    return records
+
+
+def _extract_pascal_strings(data: bytes) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    size = len(data)
+
+    for offset, length in enumerate(data):
+        if length < 3 or length > 120:
+            continue
+
+        end = offset + 1 + length
+        if end > size:
+            continue
+
+        chunk = data[offset + 1:end]
+        decoded = _clean_roz_text(_decode_cp1256_chunk(chunk))
+
+        if _interesting_roz_text(decoded):
+            records.append(
+                {
+                    "offset": offset,
+                    "kind": "pascal_u8",
+                    "encoding": "cp1256",
+                    "length": length,
+                    "text": decoded,
+                }
+            )
+
+    return records
+
+
+def parse_asctt_roz_bytes(data: bytes, max_records: int = 800) -> dict[str, Any]:
+    all_records = _extract_ascii_runs(data) + _extract_cp1256_runs(data) + _extract_pascal_strings(data)
+
+    dedup: dict[tuple[int, str], dict[str, Any]] = {}
+    for record in all_records:
+        key = (int(record["offset"]), str(record["text"]))
+        dedup[key] = record
+
+    records = sorted(dedup.values(), key=lambda row: (row["offset"], row["kind"]))
+    interesting = records[: max(50, min(max_records, 5000))]
+
+    text_blob = "\n".join(str(row["text"]) for row in records)
+
+    periods = sorted(set(re.findall(r"الحصة\s+[اأإآء-ي]+", text_blob)))
+    classes = sorted(set(re.findall(r"الصف\s+الدراسي\s+\d+", text_blob)))
+    class_tt = sorted(set(re.findall(r"CLASSTT\d+/\d+", text_blob)))
+    years = sorted(set(re.findall(r"20\d{2}/20\d{2}", text_blob)))
+
+    marker_counts = {
+        "ASCTT": data.count(b"ASCTT"),
+        "CLASSTT": data.count(b"CLASSTT"),
+        "CLASSTT_END": data.count(b"CLASSTT_END"),
+        "teacher_row1": data.count(b"teacher_row1"),
+        "teacher_row2": data.count(b"teacher_row2"),
+        "teacher2_row1": data.count(b"teacher2_row1"),
+        "teacher2_row2": data.count(b"teacher2_row2"),
+        "class_row1": data.count(b"class_row1"),
+        "class_row2": data.count(b"class_row2"),
+        "class_row3": data.count(b"class_row3"),
+        "report_header": data.count(b"report_header"),
+        "Master": data.count(b"Master"),
+    }
+
+    arabic_records_count = sum(
+        1 for row in records if any("\u0600" <= ch <= "\u06ff" for ch in str(row["text"]))
+    )
+
+    return {
+        "format": "ASCTT/ROZ",
+        "parser_stage": "inspect_only",
+        "safe_to_import": False,
+        "records_total": len(records),
+        "records_returned": len(interesting),
+        "arabic_records_count": arabic_records_count,
+        "marker_counts": marker_counts,
+        "detected": {
+            "academic_years": years,
+            "periods": periods,
+            "classes": classes,
+            "class_timetable_markers": class_tt,
+        },
+        "records": interesting,
+        "notes_ar": [
+            "هذه المرحلة قراءة وتحليل فقط ولا تقوم بأي إدخال في قاعدة البيانات.",
+            "ملف ROZ ثنائي خاص ببرنامج ASCTT وليس ZIP أو SQLite أو XML.",
+            "تم استخراج النصوص العربية ومؤشرات جداول الفصول والمعلمين بترميز CP1256.",
+            "مرحلة الاستيراد الفعلي تحتاج ربط حقول ROZ النهائية بالفصول والمدرسين والحصص بعد مراجعة هذه المعاينة.",
+        ],
+    }
+
+
+@router.post("/import/asctt-roz/inspect")
+async def inspect_asctt_roz_file(
+    payload: RozInspectPayload,
+) -> dict[str, Any]:
+    source_path = _safe_import_sample_path(payload.file_path)
+    data = source_path.read_bytes()
+
+    parsed = parse_asctt_roz_bytes(data, payload.max_records)
+
+    return {
+        "file_name": source_path.name,
+        "file_path": str(source_path),
+        "file_size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        **parsed,
+    }
+
 
 
 @router.post("/import/time-table-csv")

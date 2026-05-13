@@ -35,6 +35,7 @@ services:
       - redis
     volumes:
       - ./backend:/app
+      - ./import_samples:/app/import_samples:ro
 
   frontend:
     image: node:22-alpine
