@@ -109,6 +109,48 @@ function SmallTable({
   );
 }
 
+
+type RozCanonicalTeacher = {
+  teacher_name_ar: string;
+  confidence?: number;
+  offset?: number;
+  source_kind?: string;
+};
+
+type RozCanonicalSubject = {
+  subject_name_ar: string;
+  confidence?: number;
+  offset?: number;
+  source_kind?: string;
+};
+
+type RozInspectResult = {
+  file_name?: string;
+  file_size?: number;
+  sha256?: string;
+  safe_to_import?: boolean;
+  parser_stage?: string;
+  detected?: {
+    academic_years?: string[];
+    periods?: string[];
+    classes?: string[];
+  };
+  semantic_preview?: {
+    period_labels?: string[];
+    class_labels?: string[];
+    class_timetable_blocks?: unknown[];
+    structured_entities?: {
+      canonical_entities?: {
+        teachers_count?: number;
+        subjects_count?: number;
+        teachers?: RozCanonicalTeacher[];
+        subjects?: RozCanonicalSubject[];
+        quality_notes_ar?: string[];
+      };
+    };
+  };
+};
+
 export default function TimetableStudioPage() {
   const [summary, setSummary] = useState<Row | null>(null);
   const [readiness, setReadiness] = useState<Row | null>(null);
@@ -139,6 +181,8 @@ export default function TimetableStudioPage() {
 
   const [csv, setCsv] = useState(sampleCsv);
   const [fileName, setFileName] = useState("");
+  const [rozFilePath, setRozFilePath] = useState("import_samples/mmmmmmmmmmm2-2.roz");
+  const [rozPreview, setRozPreview] = useState<RozInspectResult | null>(null);
 
   const [subjectForm, setSubjectForm] = useState({ subject_code: "", subject_name_ar: "", color_code: "#8b5a2b" });
   const [teacherForm, setTeacherForm] = useState({ teacher_code: "", teacher_name_ar: "", phone: "", specialization: "" });
@@ -364,6 +408,17 @@ export default function TimetableStudioPage() {
   const cleanupPreview = cleanupResult?.preview || {};
   const cleanupPreviewSections = Object.entries(cleanupPreview).filter(([, rows]: [string, any]) => Array.isArray(rows) && rows.length > 0);
 
+
+
+  async function inspectRozPreview() {
+    await action("معاينة ROZ", async () => {
+      const result = await apiPost("import/asctt-roz/inspect", {
+        file_path: rozFilePath || "import_samples/mmmmmmmmmmm2-2.roz",
+        max_records: 300,
+      });
+      setRozPreview(result);
+    });
+  }
 
 async function exportCsv() {
     return action("تصدير CSV", async () => {
@@ -842,10 +897,89 @@ async function exportCsv() {
         </div>
 
         <div className="surface section-pad">
-          <h2>استيراد TimeTable CSV</h2>
-          <input className="input" type="file" accept=".csv,.txt,text/csv" onChange={chooseFile} />
-          <textarea className="input csv-area mt-small" value={csv} onChange={(e) => setCsv(e.target.value)} />
-          <button className="btn mt-small" disabled={busy || !csv.trim()} onClick={importCsv}>استيراد CSV</button>
+          <h2>استيراد ومعاينة TimeTable</h2>
+
+          <div className="alert-ok">
+            <strong>ROZ / ASCTT Preview</strong>
+            <p>
+              معاينة آمنة للملف الثنائي ROZ بدون إدخال في قاعدة البيانات. تعرض المدرسين والمواد والفصول والحصص المستخرجة قبل مرحلة الربط النهائي.
+            </p>
+          </div>
+
+          <input
+            className="input mt-small"
+            value={rozFilePath}
+            onChange={(e) => setRozFilePath(e.target.value)}
+            placeholder="مسار ملف ROZ داخل import_samples"
+          />
+
+          <button className="btn mt-small" disabled={busy || !rozFilePath.trim()} onClick={inspectRozPreview}>
+            معاينة ملف ROZ
+          </button>
+
+          {rozPreview ? (
+            <div className="roz-preview-panel mt-small">
+              <div className="roz-preview-head">
+                <div>
+                  <strong>{rozPreview.file_name || "ROZ file"}</strong>
+                  <small>{rozPreview.file_size ? `${rozPreview.file_size} bytes` : ""}</small>
+                </div>
+                <span className="status-generation">
+                  {rozPreview.safe_to_import ? "جاهز للاستيراد" : "Preview فقط"}
+                </span>
+              </div>
+
+              <div className="roz-preview-metrics">
+                <span>السنة: {(rozPreview.detected?.academic_years || []).join("، ") || "غير محدد"}</span>
+                <span>الحصص: {rozPreview.semantic_preview?.period_labels?.length || 0}</span>
+                <span>الفصول: {rozPreview.semantic_preview?.class_labels?.length || 0}</span>
+                <span>CLASSTT Blocks: {rozPreview.semantic_preview?.class_timetable_blocks?.length || 0}</span>
+                <span>المدرسون: {rozPreview.semantic_preview?.structured_entities?.canonical_entities?.teachers_count || 0}</span>
+                <span>المواد: {rozPreview.semantic_preview?.structured_entities?.canonical_entities?.subjects_count || 0}</span>
+              </div>
+
+              <div className="roz-entity-grid">
+                <div>
+                  <h3>المدرسون المستخرجون</h3>
+                  <div className="chip-list">
+                    {(rozPreview.semantic_preview?.structured_entities?.canonical_entities?.teachers || []).map((teacher) => (
+                      <span className="chip" key={`${teacher.teacher_name_ar}-${teacher.offset}`}>
+                        {teacher.teacher_name_ar}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3>المواد المستخرجة</h3>
+                  <div className="chip-list">
+                    {(rozPreview.semantic_preview?.structured_entities?.canonical_entities?.subjects || []).map((subject) => (
+                      <span className="chip" key={`${subject.subject_name_ar}-${subject.offset}`}>
+                        {subject.subject_name_ar}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <details className="mt-small">
+                <summary>ملاحظات الجودة</summary>
+                <ul>
+                  {(rozPreview.semantic_preview?.structured_entities?.canonical_entities?.quality_notes_ar || []).map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+                <small className="muted">SHA256: {rozPreview.sha256}</small>
+              </details>
+            </div>
+          ) : null}
+
+          <div className="mt">
+            <h3>استيراد CSV التقليدي</h3>
+            <input className="input" type="file" accept=".csv,.txt,text/csv" onChange={chooseFile} />
+            <textarea className="input csv-area mt-small" value={csv} onChange={(e) => setCsv(e.target.value)} />
+            <button className="btn mt-small" disabled={busy || !csv.trim()} onClick={importCsv}>استيراد CSV</button>
+          </div>
         </div>
       </section>
 

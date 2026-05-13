@@ -776,3 +776,71 @@ th {
     display: none !important;
   }
 }
+
+.roz-preview-panel {
+  border: 1px solid rgba(120, 80, 40, 0.18);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 252, 245, 0.74);
+}
+
+.roz-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.roz-preview-head strong,
+.roz-preview-head small {
+  display: block;
+}
+
+.roz-preview-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.roz-preview-metrics span {
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(92, 60, 30, 0.08);
+  font-weight: 700;
+}
+
+.roz-entity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  border-radius: 999px;
+  padding: 8px 11px;
+  background: rgba(92, 60, 30, 0.1);
+  border: 1px solid rgba(92, 60, 30, 0.14);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .roz-entity-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .roz-preview-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
