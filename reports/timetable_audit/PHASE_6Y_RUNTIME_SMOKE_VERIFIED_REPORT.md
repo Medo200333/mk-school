@@ -1,6 +1,6 @@
 # PHASE 6Y Timetable Runtime Smoke Verified
 
-- Date: 2026-05-14T12:39:28+03:00
+- Date: 2026-05-14T12:40:44+03:00
 - Root: /home/pc/mk
 - Machine: pc-HP-mt45-Mobile-Thin-Client
 - Branch: phase-6-timetable-production-polish
@@ -22,4 +22,4 @@
 - npm audit reported vulnerabilities in frontend logs; no automatic force fix was applied.
 
 ## Related Commit
-95bc890 (HEAD -> phase-6-timetable-production-polish, tag: phase-6x-teacher-class-print-boards-ui-ok) phase6x add teacher and class print boards
+45befac (HEAD -> phase-6-timetable-production-polish, tag: phase-6y-timetable-runtime-smoke-ok) phase6y verify timetable runtime smoke
