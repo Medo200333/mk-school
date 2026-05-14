@@ -1341,3 +1341,103 @@ th {
   }
 }
 
+/* Phase 6X Teacher + Class Print Boards */
+.weekly-board-mode {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.weekly-board-mode .btn {
+  min-height: 40px;
+  padding-inline: 10px;
+}
+
+.weekly-board-mode .btn.active {
+  background: linear-gradient(135deg, #6b4324, #9c6a36);
+  border-color: rgba(92, 60, 30, 0.24);
+  color: #fff;
+}
+
+.weekly-board-print-area {
+  margin-top: 14px;
+}
+
+.weekly-board-section-head {
+  align-items: center;
+  background: rgba(92, 60, 30, 0.07);
+  border: 1px solid rgba(92, 60, 30, 0.12);
+  border-radius: 16px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+}
+
+.weekly-board-section-head h3 {
+  color: #3f2a18;
+  font-size: 18px;
+  margin: 0;
+}
+
+.weekly-board-section-head span {
+  color: #6b4b2d;
+  font-weight: 900;
+}
+
+.weekly-board-teachers {
+  display: grid;
+  gap: 18px;
+}
+
+.weekly-board-teacher-card {
+  break-inside: avoid;
+}
+
+.teacher-board-table .weekly-board-cell {
+  min-width: 132px;
+}
+
+.teacher-board-lesson + .teacher-board-lesson {
+  border-top: 1px dashed rgba(92, 60, 30, 0.18);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+@media (max-width: 720px) {
+  .weekly-board-mode {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-board-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media print {
+  .weekly-board-mode,
+  .weekly-board-section-head {
+    display: none !important;
+  }
+
+  .weekly-board-print-area {
+    margin: 0 !important;
+  }
+
+  .weekly-board-teachers {
+    gap: 12px;
+  }
+
+  .weekly-board-teacher-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .teacher-board-lesson + .teacher-board-lesson {
+    margin-top: 4px;
+    padding-top: 4px;
+  }
+}
+

@@ -214,6 +214,8 @@ type WeeklyBoardResult = {
   notes_ar?: string[];
 };
 
+type WeeklyBoardMode = "classes" | "teachers" | "all";
+
 export default function TimetableStudioPage() {
   const [summary, setSummary] = useState<Row | null>(null);
   const [readiness, setReadiness] = useState<Row | null>(null);
@@ -250,6 +252,7 @@ export default function TimetableStudioPage() {
   const [rozExecuteConfirm, setRozExecuteConfirm] = useState("");
   const [weeklyBoard, setWeeklyBoard] = useState<WeeklyBoardResult | null>(null);
   const [weeklyBoardVersionId, setWeeklyBoardVersionId] = useState("");
+  const [weeklyBoardMode, setWeeklyBoardMode] = useState<WeeklyBoardMode>("classes");
 
   const [subjectForm, setSubjectForm] = useState({ subject_code: "", subject_name_ar: "", color_code: "#8b5a2b" });
   const [teacherForm, setTeacherForm] = useState({ teacher_code: "", teacher_name_ar: "", phone: "", specialization: "" });
@@ -308,6 +311,56 @@ export default function TimetableStudioPage() {
     if (!currentVersion?.id) return quality[0];
     return quality.find((q) => q.timetable_version_id === currentVersion.id) || quality[0];
   }, [quality, currentVersion]);
+
+  const weeklyTeacherBoards = useMemo(() => {
+    if (!weeklyBoard?.cells?.length) return [];
+
+    const teacherMap = new Map<
+      string,
+      {
+        teacher_id: string;
+        teacher_code: string;
+        teacher_name_ar: string;
+        lessons: WeeklyBoardCell[];
+      }
+    >();
+
+    for (const cell of weeklyBoard.cells) {
+      if (!cell || cell.is_empty || !cell.teacher_id) continue;
+
+      const teacherId = String(cell.teacher_id);
+      const teacherBoard =
+        teacherMap.get(teacherId) ||
+        {
+          teacher_id: teacherId,
+          teacher_code: cell.teacher_code || "",
+          teacher_name_ar: cell.teacher_name_ar || "مدرس غير محدد",
+          lessons: [],
+        };
+
+      teacherBoard.lessons.push(cell);
+      teacherMap.set(teacherId, teacherBoard);
+    }
+
+    return Array.from(teacherMap.values())
+      .map((teacherBoard) => {
+        const cellMap = new Map<string, WeeklyBoardCell[]>();
+
+        for (const lesson of teacherBoard.lessons) {
+          const key = `${lesson.week_day_id}:${lesson.period_id}`;
+          const lessons = cellMap.get(key) || [];
+          lessons.push(lesson);
+          cellMap.set(key, lessons);
+        }
+
+        return {
+          ...teacherBoard,
+          lessonCount: teacherBoard.lessons.length,
+          cellMap,
+        };
+      })
+      .sort((a, b) => a.teacher_name_ar.localeCompare(b.teacher_name_ar, "ar"));
+  }, [weeklyBoard]);
 
   async function refresh() {
     const [
@@ -973,6 +1026,18 @@ async function exportCsv() {
                 ))}
               </select>
 
+              <div className="weekly-board-mode" role="group" aria-label="طريقة عرض لوحة الطباعة">
+                <button type="button" className={`btn btn-secondary ${weeklyBoardMode === "classes" ? "active" : ""}`} onClick={() => setWeeklyBoardMode("classes")}>
+                  الفصول
+                </button>
+                <button type="button" className={`btn btn-secondary ${weeklyBoardMode === "teachers" ? "active" : ""}`} onClick={() => setWeeklyBoardMode("teachers")}>
+                  المدرسون
+                </button>
+                <button type="button" className={`btn btn-secondary ${weeklyBoardMode === "all" ? "active" : ""}`} onClick={() => setWeeklyBoardMode("all")}>
+                  الكل
+                </button>
+              </div>
+
               <button className="btn" disabled={busy} onClick={() => loadWeeklyBoard()}>
                 عرض الجدول الأسبوعي
               </button>
@@ -1005,66 +1070,147 @@ async function exportCsv() {
                 <span>هذا العرض قراءة فقط. تعديل الحصص يتم من الشبكة المرئية أو من محرك التوليد، وليس من لوحة الطباعة.</span>
               </div>
 
-              <div className="weekly-board-scroll mt">
-                {(weeklyBoard.classes || []).map((classRow) => {
-                  const classId = String(classRow.id);
-                  const classMatrix = weeklyBoard.matrix?.[classId] || {};
-                  const activePeriods = (weeklyBoard.periods || []).filter((period) => !period.is_break);
+              <div className="weekly-board-print-area">
+                {(weeklyBoardMode === "classes" || weeklyBoardMode === "all") && (
+                  <div className="weekly-board-scroll weekly-board-classes mt">
+                    <div className="weekly-board-section-head">
+                      <h3>لوحات الفصول للطباعة</h3>
+                      <span>{weeklyBoard.classes?.length || 0} فصل</span>
+                    </div>
 
-                  return (
-                    <article className="weekly-board-class-card" key={classId}>
-                      <div className="weekly-board-class-head">
-                        <div>
-                          <h3>{classRow.class_name_ar || classRow.class_code || "فصل غير محدد"}</h3>
-                          <small>{classRow.stage_name_ar || "مرحلة غير محددة"} · {classRow.grade_name_ar || classRow.class_code || "صف غير محدد"}</small>
-                        </div>
-                        <span>{activePeriods.length} حصص × {(weeklyBoard.days || []).length} أيام</span>
-                      </div>
+                    {(weeklyBoard.classes || []).map((classRow) => {
+                      const classId = String(classRow.id);
+                      const classMatrix = weeklyBoard.matrix?.[classId] || {};
+                      const activePeriods = (weeklyBoard.periods || []).filter((period) => !period.is_break);
 
-                      <table className="weekly-board-table">
-                        <thead>
-                          <tr>
-                            <th>الحصة</th>
-                            {(weeklyBoard.days || []).map((day) => (
-                              <th key={day.id}>{day.name_ar}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {activePeriods.map((period) => (
-                            <tr key={period.id}>
-                              <th>
-                                <strong>{period.name_ar || `الحصة ${period.period_no}`}</strong>
-                                <small>{text(period.starts_at)} - {text(period.ends_at)}</small>
-                              </th>
+                      return (
+                        <article className="weekly-board-class-card" key={classId}>
+                          <div className="weekly-board-class-head">
+                            <div>
+                              <h3>{classRow.class_name_ar || classRow.class_code || "فصل غير محدد"}</h3>
+                              <small>{classRow.stage_name_ar || "مرحلة غير محددة"} · {classRow.grade_name_ar || classRow.class_code || "صف غير محدد"}</small>
+                            </div>
+                            <span>{activePeriods.length} حصص × {(weeklyBoard.days || []).length} أيام</span>
+                          </div>
 
-                              {(weeklyBoard.days || []).map((day) => {
-                                const cell = classMatrix[String(day.id)]?.[String(period.id)];
-                                const filledCell = cell && !cell.is_empty ? cell : null;
+                          <table className="weekly-board-table">
+                            <thead>
+                              <tr>
+                                <th>الحصة</th>
+                                {(weeklyBoard.days || []).map((day) => (
+                                  <th key={day.id}>{day.name_ar}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {activePeriods.map((period) => (
+                                <tr key={period.id}>
+                                  <th>
+                                    <strong>{period.name_ar || `الحصة ${period.period_no}`}</strong>
+                                    <small>{text(period.starts_at)} - {text(period.ends_at)}</small>
+                                  </th>
 
-                                return (
-                                  <td className={`weekly-board-cell ${filledCell ? "" : "weekly-board-cell-empty"}`} key={`${classId}-${day.id}-${period.id}`}>
-                                    {filledCell ? (
-                                      <div className="weekly-board-lesson">
-                                        <strong className="weekly-board-subject" style={{ borderInlineStartColor: filledCell.subject_color || "#8b5a2b" }}>
-                                          {filledCell.subject_name_ar || "مادة غير محددة"}
-                                        </strong>
-                                        <span className="weekly-board-teacher">{filledCell.teacher_name_ar || "بدون مدرس"}</span>
-                                        <small>{filledCell.room_name_ar || "بدون قاعة"}</small>
-                                      </div>
-                                    ) : (
-                                      <span className="weekly-empty-mark">—</span>
-                                    )}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </article>
-                  );
-                })}
+                                  {(weeklyBoard.days || []).map((day) => {
+                                    const cell = classMatrix[String(day.id)]?.[String(period.id)];
+                                    const filledCell = cell && !cell.is_empty ? cell : null;
+
+                                    return (
+                                      <td className={`weekly-board-cell ${filledCell ? "" : "weekly-board-cell-empty"}`} key={`${classId}-${day.id}-${period.id}`}>
+                                        {filledCell ? (
+                                          <div className="weekly-board-lesson">
+                                            <strong className="weekly-board-subject" style={{ borderInlineStartColor: filledCell.subject_color || "#8b5a2b" }}>
+                                              {filledCell.subject_name_ar || "مادة غير محددة"}
+                                            </strong>
+                                            <span className="weekly-board-teacher">{filledCell.teacher_name_ar || "بدون مدرس"}</span>
+                                            <small>{filledCell.room_name_ar || "بدون قاعة"}</small>
+                                          </div>
+                                        ) : (
+                                          <span className="weekly-empty-mark">—</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {(weeklyBoardMode === "teachers" || weeklyBoardMode === "all") && (
+                  <div className="weekly-board-teachers mt">
+                    <div className="weekly-board-section-head">
+                      <h3>لوحات المدرسين للطباعة</h3>
+                      <span>{weeklyTeacherBoards.length} مدرس</span>
+                    </div>
+
+                    {weeklyTeacherBoards.length ? (
+                      weeklyTeacherBoards.map((teacherBoard) => {
+                        const activePeriods = (weeklyBoard.periods || []).filter((period) => !period.is_break);
+
+                        return (
+                          <article className="weekly-board-class-card weekly-board-teacher-card" key={teacherBoard.teacher_id}>
+                            <div className="weekly-board-class-head">
+                              <div>
+                                <h3>{teacherBoard.teacher_name_ar}</h3>
+                                <small>{teacherBoard.teacher_code || "بدون كود"} · {teacherBoard.lessonCount} حصة</small>
+                              </div>
+                              <span>لوحة مدرس</span>
+                            </div>
+
+                            <table className="weekly-board-table teacher-board-table">
+                              <thead>
+                                <tr>
+                                  <th>الحصة</th>
+                                  {(weeklyBoard.days || []).map((day) => (
+                                    <th key={day.id}>{day.name_ar}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {activePeriods.map((period) => (
+                                  <tr key={period.id}>
+                                    <th>
+                                      <strong>{period.name_ar || `الحصة ${period.period_no}`}</strong>
+                                      <small>{text(period.starts_at)} - {text(period.ends_at)}</small>
+                                    </th>
+
+                                    {(weeklyBoard.days || []).map((day) => {
+                                      const lessons = teacherBoard.cellMap.get(`${day.id}:${period.id}`) || [];
+
+                                      return (
+                                        <td className={`weekly-board-cell ${lessons.length ? "" : "weekly-board-cell-empty"}`} key={`${teacherBoard.teacher_id}-${day.id}-${period.id}`}>
+                                          {lessons.length ? (
+                                            lessons.map((lesson, index) => (
+                                              <div className="weekly-board-lesson teacher-board-lesson" key={lesson.slot_id || `${teacherBoard.teacher_id}-${day.id}-${period.id}-${index}`}>
+                                                <strong className="weekly-board-subject" style={{ borderInlineStartColor: lesson.subject_color || "#8b5a2b" }}>
+                                                  {lesson.subject_name_ar || "مادة غير محددة"}
+                                                </strong>
+                                                <span className="weekly-board-teacher">{lesson.class_name_ar || lesson.class_code || "فصل غير محدد"}</span>
+                                                <small>{lesson.room_name_ar || "بدون قاعة"}</small>
+                                              </div>
+                                            ))
+                                          ) : (
+                                            <span className="weekly-empty-mark">—</span>
+                                          )}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </article>
+                        );
+                      })
+                    ) : (
+                      <p className="muted">لا توجد حصص مرتبطة بمدرسين داخل لوحة الطباعة الحالية.</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <details className="mt-small weekly-board-notes">
