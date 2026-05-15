@@ -124,12 +124,47 @@ type RozCanonicalSubject = {
   source_kind?: string;
 };
 
+type RozEvidenceSafety = {
+  safe_to_import_entities?: boolean;
+  safe_to_import_slots?: boolean;
+  safe_to_confirm?: boolean;
+  notes_ar?: string[];
+};
+
+type RozEvidenceConfidence = {
+  score?: number;
+  percent?: number;
+  breakdown?: Record<string, number>;
+  thresholds?: Record<string, number>;
+};
+
+type RozEvidenceSummary = {
+  parser_stage?: string;
+  format?: {
+    family?: string;
+    flags?: Record<string, boolean>;
+    counts?: Record<string, number>;
+  };
+  confidence?: RozEvidenceConfidence;
+  detected_counts?: Record<string, number>;
+  detected_preview?: {
+    academic_years?: string[];
+    period_labels?: string[];
+    class_labels?: string[];
+    subject_candidates?: string[];
+  };
+  safety?: RozEvidenceSafety;
+};
+
 type RozInspectResult = {
   file_name?: string;
   file_size?: number;
   sha256?: string;
   safe_to_import?: boolean;
   parser_stage?: string;
+  evidence_summary?: RozEvidenceSummary;
+  evidence_confidence?: RozEvidenceConfidence;
+  evidence_safety?: RozEvidenceSafety;
   detected?: {
     academic_years?: string[];
     periods?: string[];
@@ -1304,7 +1339,13 @@ async function exportCsv() {
                   <small>{rozPreview.file_size ? `${rozPreview.file_size} bytes` : ""}</small>
                 </div>
                 <span className="status-generation">
-                  {rozPreview.safe_to_import ? "جاهز للاستيراد" : "Preview فقط"}
+                  {rozPreview.evidence_safety?.safe_to_import_slots
+                    ? "Evidence يسمح بالحصص"
+                    : rozPreview.evidence_safety?.safe_to_import_entities
+                      ? "Evidence كيانات فقط"
+                      : rozPreview.safe_to_import
+                        ? "جاهز للاستيراد"
+                        : "Preview فقط"}
                 </span>
               </div>
 
@@ -1315,6 +1356,10 @@ async function exportCsv() {
                 <span>CLASSTT Blocks: {rozPreview.semantic_preview?.class_timetable_blocks?.length || 0}</span>
                 <span>المدرسون: {rozPreview.semantic_preview?.structured_entities?.canonical_entities?.teachers_count || 0}</span>
                 <span>المواد: {rozPreview.semantic_preview?.structured_entities?.canonical_entities?.subjects_count || 0}</span>
+                <span>Evidence: {rozPreview.evidence_summary?.format?.family || "غير مفعل"}</span>
+                <span>ثقة Evidence: {typeof rozPreview.evidence_confidence?.percent === "number" ? `${rozPreview.evidence_confidence?.percent}%` : "غير محدد"}</span>
+                <span>استيراد الكيانات: {rozPreview.evidence_safety?.safe_to_import_entities ? "مراجعة مسموحة" : "ممنوع"}</span>
+                <span>استيراد الحصص: {rozPreview.evidence_safety?.safe_to_import_slots ? "مسموح" : "ممنوع"}</span>
               </div>
 
               <div className="roz-entity-grid">
@@ -1349,6 +1394,23 @@ async function exportCsv() {
                   ))}
                 </ul>
                 <small className="muted">SHA256: {rozPreview.sha256}</small>
+              </details>
+
+              <details className="mt-small">
+                <summary>تفاصيل Evidence الفنية</summary>
+                <div className="roz-preview-metrics">
+                  <span>Parser: {rozPreview.evidence_summary?.parser_stage || "غير محدد"}</span>
+                  <span>Family: {rozPreview.evidence_summary?.format?.family || "غير محدد"}</span>
+                  <span>ASCTT: {rozPreview.evidence_summary?.format?.counts?.["ASCTT"] ?? 0}</span>
+                  <span>CLASSTT: {rozPreview.evidence_summary?.format?.counts?.["CLASSTT"] ?? 0}</span>
+                  <span>Arabic Records: {rozPreview.evidence_summary?.detected_counts?.arabic_records ?? 0}</span>
+                  <span>Safe Confirm: {rozPreview.evidence_safety?.safe_to_confirm ? "مسموح" : "ممنوع"}</span>
+                </div>
+                <ul>
+                  {(rozPreview.evidence_safety?.notes_ar || []).map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
               </details>
             </div>
           ) : null}
