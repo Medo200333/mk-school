@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.services.roz_evidence import analyze_roz_file, summarize_for_cli
 from pathlib import Path
 
 router = APIRouter(prefix="/api/v1/school-timetable", tags=["school-timetable"])
@@ -1621,12 +1622,17 @@ async def inspect_asctt_roz_file(
     data = source_path.read_bytes()
 
     parsed = parse_asctt_roz_bytes(data, payload.max_records)
+    evidence = analyze_roz_file(source_path, max_records=min(payload.max_records, 300))
+    evidence_summary = summarize_for_cli(evidence)
 
     return {
         "file_name": source_path.name,
         "file_path": str(source_path),
         "file_size": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
+        "evidence_summary": evidence_summary,
+        "evidence_confidence": evidence_summary.get("confidence"),
+        "evidence_safety": evidence_summary.get("safety"),
         **parsed,
     }
 
