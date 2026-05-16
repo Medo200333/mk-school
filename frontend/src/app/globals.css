@@ -854,6 +854,37 @@ th {
   background: rgba(255, 248, 235, 0.68);
 }
 
+.roz-slot-blocked-notice {
+  border: 1px solid rgba(180, 35, 24, 0.18);
+  border-radius: 18px;
+  padding: 14px 16px;
+  margin-top: 12px;
+  background: rgba(180, 35, 24, 0.06);
+  color: #5b211c;
+}
+
+.roz-slot-blocked-notice strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.roz-slot-blocked-notice p {
+  margin: 0;
+  color: #6f312b;
+  line-height: 1.8;
+}
+
+.roz-slot-blocked-notice ul {
+  margin: 10px 0 0;
+  padding-inline-start: 22px;
+  color: #6f312b;
+  font-weight: 700;
+}
+
+.roz-slot-blocked-notice li + li {
+  margin-top: 4px;
+}
+
 .roz-entity-import-panel .action-row {
   align-items: stretch;
   display: grid;

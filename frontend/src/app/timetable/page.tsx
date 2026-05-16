@@ -1316,8 +1316,22 @@ async function exportCsv() {
           <div className="alert-ok">
             <strong>ROZ / ASCTT Preview</strong>
             <p>
-              معاينة آمنة للملف الثنائي ROZ بدون إدخال في قاعدة البيانات. تعرض المدرسين والمواد والفصول والحصص المستخرجة قبل مرحلة الربط النهائي.
+              معاينة آمنة للملف الثنائي ROZ بدون إدخال في قاعدة البيانات. تعرض Evidence للكيانات والتخطيط فقط، ولا تعتمد أي خانات حصص من ROZ.
             </p>
+          </div>
+
+          <div className="roz-slot-blocked-notice" role="note" aria-label="ROZ slot import unsupported">
+            <div>
+              <strong>استيراد حصص ROZ مغلق لهذا الملف</strong>
+              <p>
+                Phase 7I أثبتت أن CLASSTT يمثل Layout/Display Metadata فقط، ولم يثبت وجود مصدر lesson tuple يربط الفصل + المادة + المدرس + اليوم + الحصة.
+              </p>
+            </div>
+            <ul>
+              <li>safe_to_import_slots = false</li>
+              <li>safe_to_confirm = false</li>
+              <li>المسموح حاليًا: معاينة Evidence واستيراد الكيانات فقط.</li>
+            </ul>
           </div>
 
           <input
@@ -1339,13 +1353,11 @@ async function exportCsv() {
                   <small>{rozPreview.file_size ? `${rozPreview.file_size} bytes` : ""}</small>
                 </div>
                 <span className="status-generation">
-                  {rozPreview.evidence_safety?.safe_to_import_slots
-                    ? "Evidence يسمح بالحصص"
-                    : rozPreview.evidence_safety?.safe_to_import_entities
-                      ? "Evidence كيانات فقط"
-                      : rozPreview.safe_to_import
-                        ? "جاهز للاستيراد"
-                        : "Preview فقط"}
+                  {rozPreview.evidence_safety?.safe_to_import_entities
+                    ? "Evidence كيانات فقط"
+                    : rozPreview.safe_to_import
+                      ? "Preview قابل للمراجعة"
+                      : "Preview فقط"}
                 </span>
               </div>
 
@@ -1359,7 +1371,7 @@ async function exportCsv() {
                 <span>Evidence: {rozPreview.evidence_summary?.format?.family || "غير مفعل"}</span>
                 <span>ثقة Evidence: {typeof rozPreview.evidence_confidence?.percent === "number" ? `${rozPreview.evidence_confidence?.percent}%` : "غير محدد"}</span>
                 <span>استيراد الكيانات: {rozPreview.evidence_safety?.safe_to_import_entities ? "مراجعة مسموحة" : "ممنوع"}</span>
-                <span>استيراد الحصص: {rozPreview.evidence_safety?.safe_to_import_slots ? "مسموح" : "ممنوع"}</span>
+                <span>استيراد الحصص: مغلق Phase 7I</span>
               </div>
 
               <div className="roz-entity-grid">
@@ -1404,7 +1416,7 @@ async function exportCsv() {
                   <span>ASCTT: {rozPreview.evidence_summary?.format?.counts?.["ASCTT"] ?? 0}</span>
                   <span>CLASSTT: {rozPreview.evidence_summary?.format?.counts?.["CLASSTT"] ?? 0}</span>
                   <span>Arabic Records: {rozPreview.evidence_summary?.detected_counts?.arabic_records ?? 0}</span>
-                  <span>Safe Confirm: {rozPreview.evidence_safety?.safe_to_confirm ? "مسموح" : "ممنوع"}</span>
+                  <span>Safe Confirm للحصص: مغلق</span>
                 </div>
                 <ul>
                   {(rozPreview.evidence_safety?.notes_ar || []).map((note) => (
@@ -1451,7 +1463,7 @@ async function exportCsv() {
                   <span>مواد: {rozEntityImportPlan.counts?.subjects_total || 0}</span>
                   <span>فصول: {rozEntityImportPlan.counts?.classes_total || 0}</span>
                   <span>سيتم إنشاء مدرسين: {rozEntityImportPlan.counts?.teachers_would_create || rozEntityImportPlan.counts?.teachers_created || 0}</span>
-                  <span>استيراد الحصص: {rozEntityImportPlan.safe_to_import_slots ? "مسموح" : "ممنوع الآن"}</span>
+                  <span>استيراد الحصص: مغلق — كيانات فقط</span>
                 </div>
 
                 <div className="roz-import-tables">
