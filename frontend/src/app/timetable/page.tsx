@@ -207,6 +207,33 @@ type RozEntityImportResult = {
   notes_ar?: string[];
 };
 
+type RozSlotPreviewResult = {
+  file_name?: string;
+  file_size?: number;
+  sha256?: string;
+  mode?: string;
+  parser_stage?: string;
+  safe_to_import_slots?: boolean;
+  can_execute_import?: boolean;
+  real_classtt_blocks_count?: number;
+  classtt_end_count?: number;
+  headers_count?: number;
+  counts?: Record<string, number>;
+  required_db_columns?: string[];
+  unresolved_tuple_fields?: string[];
+  mapping_readiness?: Record<string, string | number | boolean>;
+  decoder_gate?: {
+    can_build_slot_import_plan?: boolean;
+    can_write_school_timetable_slots?: boolean;
+    reason_ar?: string;
+    required_before_db_write?: string[];
+  };
+  real_classtt_blocks?: Row[];
+  class_timetable_blocks?: Row[];
+  notes_ar?: string[];
+  [key: string]: any;
+};
+
 type WeeklyBoardCell = {
   school_class_id: string;
   class_code?: string | null;
@@ -284,6 +311,7 @@ export default function TimetableStudioPage() {
   const [rozFilePath, setRozFilePath] = useState("import_samples/mmmmmmmmmmm2-2.roz");
   const [rozPreview, setRozPreview] = useState<RozInspectResult | null>(null);
   const [rozEntityImportPlan, setRozEntityImportPlan] = useState<RozEntityImportResult | null>(null);
+  const [rozSlotPreview, setRozSlotPreview] = useState<RozSlotPreviewResult | null>(null);
   const [rozExecuteConfirm, setRozExecuteConfirm] = useState("");
   const [weeklyBoard, setWeeklyBoard] = useState<WeeklyBoardResult | null>(null);
   const [weeklyBoardVersionId, setWeeklyBoardVersionId] = useState("");
@@ -573,6 +601,7 @@ export default function TimetableStudioPage() {
       });
       setRozPreview(result);
       setRozEntityImportPlan(null);
+      setRozSlotPreview(null);
     });
   }
 
@@ -596,6 +625,17 @@ export default function TimetableStudioPage() {
         execute_confirm: rozExecuteConfirm,
       });
       setRozEntityImportPlan(result);
+      return result;
+    });
+  }
+
+  async function previewRozFullTimetableSlots() {
+    await action("تحليل خطة استيراد الجدول الكامل من ROZ", async () => {
+      const result = await apiPost("import/asctt-roz/slots/preview", {
+        file_path: rozFilePath || "import_samples/mmmmmmmmmmm2-2.roz",
+        max_records: 300,
+      });
+      setRozSlotPreview(result);
       return result;
     });
   }
@@ -1313,25 +1353,28 @@ async function exportCsv() {
         <div className="surface section-pad">
           <h2>استيراد ومعاينة TimeTable</h2>
 
-          <div className="alert-ok">
-            <strong>ROZ / ASCTT Preview</strong>
+          <div className="alert-ok roz-full-hero">
+            <strong>لوحة استيراد الجدول الكامل من ROZ / ASCTT</strong>
             <p>
-              معاينة آمنة للملف الثنائي ROZ بدون إدخال في قاعدة البيانات. تعرض Evidence للكيانات والتخطيط فقط، ولا تعتمد أي خانات حصص من ROZ.
+              هذه اللوحة مخصصة لهدف واحد: قراءة ملف ROZ، استخراج الفصول والمدرسين والمواد، تحليل CLASSTT الحقيقي، ثم عرض خطة خانات الجدول قبل أي كتابة في قاعدة البيانات.
             </p>
           </div>
 
-          <div className="roz-slot-blocked-notice" role="note" aria-label="ROZ slot import unsupported">
+          <div className="roz-full-dashboard" role="note" aria-label="ROZ full timetable import dashboard">
             <div>
-              <strong>استيراد حصص ROZ مغلق لهذا الملف</strong>
+              <strong>مسار التشغيل الصحيح</strong>
               <p>
-                Phase 7I أثبتت أن CLASSTT يمثل Layout/Display Metadata فقط، ولم يثبت وجود مصدر lesson tuple يربط الفصل + المادة + المدرس + اليوم + الحصة.
+                لن يتم التعامل مع حضور وانصراف الطلبة هنا. الهدف هو تحويل جدول ROZ إلى خطة timetable slots كاملة بعد إثبات الربط deterministic بين الفصل + اليوم + الحصة + المادة + المدرس.
               </p>
             </div>
-            <ul>
-              <li>safe_to_import_slots = false</li>
-              <li>safe_to_confirm = false</li>
-              <li>المسموح حاليًا: معاينة Evidence واستيراد الكيانات فقط.</li>
-            </ul>
+            <ol className="roz-full-pipeline">
+              <li>قراءة ملف ROZ من import_samples فقط</li>
+              <li>استخراج الفصول والمدرسين والمواد</li>
+              <li>تحليل CLASSTT الحقيقي بعد استبعاد CLASSTT_END</li>
+              <li>بناء Preview لخانات school.timetable_slots المطلوبة</li>
+              <li>عرض unresolved tuple fields و conflict gates</li>
+              <li>التنفيذ الفعلي لاحقًا فقط بعد Confirm منفصل وجودة mapping مثبتة</li>
+            </ol>
           </div>
 
           <input
@@ -1341,9 +1384,93 @@ async function exportCsv() {
             placeholder="مسار ملف ROZ داخل import_samples"
           />
 
-          <button className="btn mt-small" disabled={busy || !rozFilePath.trim()} onClick={inspectRozPreview}>
-            معاينة ملف ROZ
-          </button>
+          <div className="roz-full-actions mt-small">
+            <button className="btn" disabled={busy || !rozFilePath.trim()} onClick={inspectRozPreview}>
+              معاينة ملف ROZ
+            </button>
+            <button className="btn btn-secondary" disabled={busy || !rozFilePath.trim()} onClick={previewRozFullTimetableSlots}>
+              تحليل خطة خانات الجدول الكامل
+            </button>
+          </div>
+
+          {rozSlotPreview ? (
+            <div className="roz-slot-preview-panel mt-small">
+              <div className="roz-preview-head">
+                <div>
+                  <strong>Preview خطة الجدول الكامل من ROZ</strong>
+                  <small>{rozSlotPreview.file_name || "ROZ file"} — لا توجد كتابة في قاعدة البيانات</small>
+                </div>
+                <span className={rozSlotPreview.can_execute_import ? "status-approved" : "status-generation"}>
+                  {rozSlotPreview.can_execute_import ? "جاهز للمراجعة النهائية" : "Mapping Gate"}
+                </span>
+              </div>
+
+              <div className="roz-preview-metrics">
+                <span>الوضع: {rozSlotPreview.mode || "preview_only"}</span>
+                <span>CLASSTT الحقيقي: {rozSlotPreview.counts?.["real_classtt_blocks"] ?? rozSlotPreview.real_classtt_blocks_count ?? 0}</span>
+                <span>CLASSTT_END: {rozSlotPreview.counts?.["classtt_end"] ?? rozSlotPreview.classtt_end_count ?? 0}</span>
+                <span>Headers: {rozSlotPreview.counts?.["headers"] ?? rozSlotPreview.headers_count ?? 0}</span>
+                <span>safe_to_import_slots: {rozSlotPreview.safe_to_import_slots ? "true" : "false"}</span>
+                <span>can_execute_import: {rozSlotPreview.can_execute_import ? "true" : "false"}</span>
+              </div>
+
+              <div className="roz-slot-preview-grid">
+                <div>
+                  <h3>أعمدة قاعدة البيانات المطلوبة</h3>
+                  <div className="chip-list">
+                    {((rozSlotPreview.required_db_columns || [
+                      "timetable_version_id",
+                      "school_class_id",
+                      "week_day_id",
+                      "period_id",
+                      "subject_name_ar",
+                      "teacher_id",
+                      "classroom_id",
+                    ]) as string[]).map((field) => (
+                      <span className="chip" key={field}>{field}</span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3>حقول الربط غير المثبتة بعد</h3>
+                  <div className="chip-list">
+                    {((rozSlotPreview.unresolved_tuple_fields || [
+                      "day ordinal",
+                      "period ordinal",
+                      "subject mapping",
+                      "teacher mapping",
+                    ]) as string[]).map((field) => (
+                      <span className="chip chip-warn" key={field}>{field}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <details className="mt-small" open>
+                <summary>قرار بوابة الاستيراد</summary>
+                <p className="muted">
+                  {rozSlotPreview.decoder_gate?.reason_ar || "لم يثبت بعد ربط deterministic لكل خانة بالمادة والمدرس واليوم والحصة، لذلك التنفيذ الفعلي غير مفعل."}
+                </p>
+                <ul className="roz-slot-gate-list">
+                  {((rozSlotPreview.decoder_gate?.required_before_db_write || []) as string[]).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </details>
+
+              <SmallTable
+                rows={((rozSlotPreview.real_classtt_blocks || rozSlotPreview.class_timetable_blocks || []) as Row[]).slice(0, 8)}
+                empty="لا توجد بلوكات CLASSTT معروضة"
+                columns={[
+                  { key: "block_index", label: "Block" },
+                  { key: "offset", label: "Offset" },
+                  { key: "byte_length", label: "Bytes" },
+                  { key: "mapping_confidence", label: "Mapping" },
+                ]}
+              />
+            </div>
+          ) : null}
 
           {rozPreview ? (
             <div className="roz-preview-panel mt-small">
@@ -1371,7 +1498,7 @@ async function exportCsv() {
                 <span>Evidence: {rozPreview.evidence_summary?.format?.family || "غير مفعل"}</span>
                 <span>ثقة Evidence: {typeof rozPreview.evidence_confidence?.percent === "number" ? `${rozPreview.evidence_confidence?.percent}%` : "غير محدد"}</span>
                 <span>استيراد الكيانات: {rozPreview.evidence_safety?.safe_to_import_entities ? "مراجعة مسموحة" : "ممنوع"}</span>
-                <span>استيراد الحصص: مغلق Phase 7I</span>
+                <span>خانات الجدول: Preview / Mapping Gate</span>
               </div>
 
               <div className="roz-entity-grid">
@@ -1416,7 +1543,7 @@ async function exportCsv() {
                   <span>ASCTT: {rozPreview.evidence_summary?.format?.counts?.["ASCTT"] ?? 0}</span>
                   <span>CLASSTT: {rozPreview.evidence_summary?.format?.counts?.["CLASSTT"] ?? 0}</span>
                   <span>Arabic Records: {rozPreview.evidence_summary?.detected_counts?.arabic_records ?? 0}</span>
-                  <span>Safe Confirm للحصص: مغلق</span>
+                  <span>Safe Confirm للحصص: غير مفعل حتى إثبات tuple</span>
                 </div>
                 <ul>
                   {(rozPreview.evidence_safety?.notes_ar || []).map((note) => (
@@ -1463,7 +1590,7 @@ async function exportCsv() {
                   <span>مواد: {rozEntityImportPlan.counts?.subjects_total || 0}</span>
                   <span>فصول: {rozEntityImportPlan.counts?.classes_total || 0}</span>
                   <span>سيتم إنشاء مدرسين: {rozEntityImportPlan.counts?.teachers_would_create || rozEntityImportPlan.counts?.teachers_created || 0}</span>
-                  <span>استيراد الحصص: مغلق — كيانات فقط</span>
+                  <span>خانات الجدول: منفصلة في لوحة الجدول الكامل أعلاه</span>
                 </div>
 
                 <div className="roz-import-tables">

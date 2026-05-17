@@ -886,41 +886,144 @@ def _meaningful_arabic_records(records: list[dict[str, Any]], limit: int = 160) 
     return useful
 
 
-def _extract_classtt_blocks(data: bytes, limit: int = 40) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = []
+def _find_roz_marker_offsets(data: bytes, marker: bytes) -> list[int]:
+    offsets: list[int] = []
+    start = 0
+    while True:
+        pos = data.find(marker, start)
+        if pos < 0:
+            break
+        offsets.append(pos)
+        start = pos + len(marker)
+    return offsets
+
+
+def _find_real_classtt_offsets(data: bytes) -> list[int]:
     marker = b"CLASSTT"
     end_marker = b"CLASSTT_END"
-    start = 0
 
-    while len(blocks) < limit:
+    offsets: list[int] = []
+    start = 0
+    while True:
         pos = data.find(marker, start)
         if pos < 0:
             break
 
-        end = data.find(end_marker, pos)
-        if end < 0:
-            block_end = min(len(data), pos + 1500)
-            closed = False
-        else:
-            block_end = min(len(data), end + len(end_marker) + 260)
-            closed = True
+        if data[pos:pos + len(end_marker)] != end_marker:
+            offsets.append(pos)
 
-        raw = data[pos:block_end]
+        start = pos + len(marker)
+
+    return offsets
+
+
+def _extract_classtt_header(raw: bytes) -> dict[str, Any]:
+    header_bytes = raw[:96]
+    match = re.match(
+        rb"CLASSTT\x03?(\d{1,2})/(\d{1,2})\x03?(\d{1,2})/(\d{1,2})",
+        header_bytes,
+    )
+
+    header_text = _clean_roz_text(_decode_cp1256_chunk(header_bytes)).replace("\n", " ")
+
+    if not match:
+        return {
+            "matched": False,
+            "header_text": header_text,
+            "body_start": len(b"CLASSTT"),
+            "mapping_confidence": "unresolved",
+        }
+
+    left_a = int(match.group(1))
+    left_b = int(match.group(2))
+    right_a = int(match.group(3))
+    right_b = int(match.group(4))
+
+    return {
+        "matched": True,
+        "header_text": header_text,
+        "left_ref": f"{left_a}/{left_b}",
+        "right_ref": f"{right_a}/{right_b}",
+        "section_index": left_a,
+        "candidate_day_or_page": left_b,
+        "right_section_index": right_a,
+        "right_candidate_day_or_page": right_b,
+        "body_start": match.end(),
+        "mapping_confidence": "layout_header_only",
+        "note_ar": "رأس CLASSTT يثبت وجود بلوك تخطيطي، لكنه لا يثبت وحده المادة أو المدرس لكل خانة.",
+    }
+
+
+def _count_low_bytes(raw: bytes, maximum: int = 40, limit: int = 18) -> list[dict[str, int]]:
+    counts: dict[int, int] = {}
+    for value in raw:
+        if 0 <= value <= maximum:
+            counts[value] = counts.get(value, 0) + 1
+
+    return [
+        {"value": value, "count": count}
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
+
+
+def _first_u32_values(raw: bytes, limit: int = 24) -> list[int]:
+    values: list[int] = []
+    usable = min(len(raw), limit * 4)
+    for pos in range(0, usable - 3, 4):
+        values.append(int.from_bytes(raw[pos:pos + 4], "little", signed=False))
+    return values
+
+
+def _extract_classtt_blocks(data: bytes, limit: int = 40) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    end_marker = b"CLASSTT_END"
+
+    for index, pos in enumerate(_find_real_classtt_offsets(data), start=1):
+        if len(blocks) >= limit:
+            break
+
+        end = data.find(end_marker, pos + len(b"CLASSTT"))
+        if end < 0:
+            block_end = min(len(data), pos + 4096)
+            closed = False
+            raw = data[pos:block_end]
+            body_raw = raw
+        else:
+            block_end = end + len(end_marker)
+            closed = True
+            raw = data[pos:block_end]
+
+        header = _extract_classtt_header(raw)
+        body_start = int(header.get("body_start") or len(b"CLASSTT"))
+        body_end = raw.find(end_marker)
+        if body_end < 0:
+            body_end = len(raw)
+
+        body_raw = raw[body_start:body_end]
         decoded = _clean_roz_text(_decode_cp1256_chunk(raw))
-        class_refs = sorted(set(re.findall(r"CLASSTT\d+/\d+", decoded)))
         numeric_refs = sorted(set(re.findall(r"\b\d{1,2}/\d{1,2}\b", decoded)))
 
         blocks.append(
             {
+                "block_index": index,
                 "offset": pos,
                 "closed": closed,
                 "byte_length": len(raw),
-                "class_refs": class_refs,
+                "body_length": len(body_raw),
+                "header": header,
                 "numeric_refs": numeric_refs,
+                "first_u32_values": _first_u32_values(body_raw),
+                "low_byte_counts": _count_low_bytes(body_raw),
                 "text_preview": decoded[:1400],
+                "slot_tuple_mapping": {
+                    "class": "unresolved",
+                    "day": "candidate_from_header_not_confirmed",
+                    "period": "unresolved",
+                    "subject": "unresolved",
+                    "teacher": "unresolved",
+                },
             }
         )
-        start = pos + len(marker)
 
     return blocks
 
@@ -1950,6 +2053,218 @@ async def import_asctt_roz_entities(
         "safe_to_import_slots": False,
         **plan,
     }
+
+
+
+class RozSlotPreviewPayload(BaseModel):
+    file_path: str = "import_samples/mmmmmmmmmmm2-2.roz"
+    max_records: int = 300
+
+
+async def _build_roz_slot_preview_plan(
+    db: AsyncSession,
+    *,
+    parsed: dict[str, Any],
+    data: bytes,
+    file_name: str,
+    file_size: int,
+    sha256: str,
+) -> dict[str, Any]:
+    blocks = _extract_classtt_blocks(data, limit=80)
+
+    columns_result = await db.execute(text("""
+        SELECT column_name, data_type, udt_name, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'school'
+          AND table_name = 'timetable_slots'
+        ORDER BY ordinal_position
+    """))
+
+    days_result = await db.execute(text("""
+        SELECT id, day_code, name_ar, sort_order
+        FROM school.week_days
+        ORDER BY sort_order
+    """))
+
+    periods_result = await db.execute(text("""
+        SELECT id, period_no, name_ar, starts_at, ends_at, is_active
+        FROM school.lesson_periods
+        ORDER BY period_no
+    """))
+
+    classes_result = await db.execute(text("""
+        SELECT id, class_code, class_name_ar
+        FROM school.school_classes
+        WHERE is_active = true
+        ORDER BY class_code
+    """))
+
+    teachers_result = await db.execute(text("""
+        SELECT id, teacher_code, teacher_name_ar
+        FROM school.teachers
+        WHERE is_active = true
+        ORDER BY teacher_name_ar
+    """))
+
+    subjects_result = await db.execute(text("""
+        SELECT id, subject_code, subject_name_ar
+        FROM school.subjects
+        WHERE is_active = true
+        ORDER BY subject_name_ar
+    """))
+
+    versions_result = await db.execute(text("""
+        SELECT id, name_ar, status, is_current, created_at
+        FROM school.timetable_versions
+        ORDER BY is_current DESC, created_at DESC
+        LIMIT 12
+    """))
+
+    target_columns = rows(columns_result)
+    days = rows(days_result)
+    periods = rows(periods_result)
+    classes = rows(classes_result)
+    teachers = rows(teachers_result)
+    subjects = rows(subjects_result)
+    versions = rows(versions_result)
+
+    required_columns = [
+        "timetable_version_id",
+        "school_class_id",
+        "week_day_id",
+        "period_id",
+        "subject_name_ar",
+        "teacher_id",
+        "classroom_id",
+    ]
+
+    preview_rows: list[dict[str, Any]] = []
+    for block in blocks:
+        header = dict(block.get("header") or {})
+        candidate_day_or_page = header.get("candidate_day_or_page")
+        candidate_day = None
+        if isinstance(candidate_day_or_page, int):
+            candidate_day = next((day for day in days if int(day.get("sort_order") or -1) == candidate_day_or_page), None)
+
+        preview_rows.append(
+            {
+                "block_index": block.get("block_index"),
+                "offset": block.get("offset"),
+                "source_header": header.get("left_ref") or header.get("header_text"),
+                "candidate_day_or_page": candidate_day_or_page,
+                "candidate_day_name_ar": candidate_day.get("name_ar") if candidate_day else None,
+                "class_mapping": "unresolved",
+                "period_mapping": "unresolved",
+                "subject_mapping": "unresolved",
+                "teacher_mapping": "unresolved",
+                "action": "blocked_until_tuple_mapping_is_proven",
+            }
+        )
+
+    canonical_entities = (
+        parsed.get("semantic_preview", {})
+        .get("structured_entities", {})
+        .get("canonical_entities", {})
+    )
+
+    return {
+        "module": "roz-full-timetable-import",
+        "mode": "preview_only",
+        "database_impact": "none",
+        "safe_to_import_slots": False,
+        "safe_to_confirm": False,
+        "can_execute_import": False,
+        "file_name": file_name,
+        "file_size": file_size,
+        "sha256": sha256,
+        "target_table": "school.timetable_slots",
+        "target_required_columns": required_columns,
+        "target_write_contract": {
+            "columns": target_columns,
+            "unique_conflict_key": [
+                "timetable_version_id",
+                "school_class_id",
+                "week_day_id",
+                "period_id",
+            ],
+            "teacher_conflict_key": [
+                "timetable_version_id",
+                "teacher_id",
+                "week_day_id",
+                "period_id",
+            ],
+            "room_conflict_key": [
+                "timetable_version_id",
+                "classroom_id",
+                "week_day_id",
+                "period_id",
+            ],
+        },
+        "counts": {
+            "real_classtt_blocks": len(blocks),
+            "db_week_days": len(days),
+            "db_periods": len(periods),
+            "db_classes": len(classes),
+            "db_teachers": len(teachers),
+            "db_subjects": len(subjects),
+            "parsed_teachers": int(canonical_entities.get("teachers_count") or 0),
+            "parsed_subjects": int(canonical_entities.get("subjects_count") or 0),
+        },
+        "mapping_status": {
+            "file_format": "ASCTT/ROZ",
+            "real_classtt_blocks": "proven",
+            "class_block_to_school_class": "unresolved",
+            "day_ordinal": "candidate_only_from_header",
+            "period_ordinal": "unresolved",
+            "subject_per_slot": "unresolved",
+            "teacher_per_slot": "unresolved",
+            "conflict_preview": "not_available_until_slot_rows_exist",
+        },
+        "unresolved_tuple_fields": [
+            "school_class_id",
+            "week_day_id",
+            "period_id",
+            "subject_name_ar",
+            "teacher_id",
+            "classroom_id",
+        ],
+        "classtt_blocks": blocks,
+        "preview_rows": preview_rows,
+        "database_snapshot": {
+            "week_days": days,
+            "periods": periods,
+            "classes_sample": classes[:30],
+            "teachers_sample": teachers[:30],
+            "subjects_sample": subjects[:30],
+            "versions_sample": versions,
+        },
+        "notes_ar": [
+            "هذه لوحة معاينة لاستيراد الجدول الكامل من ROZ وليست تنفيذًا فعليًا.",
+            "تم إثبات فصل CLASSTT الحقيقي عن CLASSTT_END.",
+            "لا توجد كتابة في school.timetable_slots في هذه المرحلة.",
+            "التنفيذ الفعلي سيحتاج dry-run بخانات مثبتة ثم معاينة تعارضات قبل أي INSERT.",
+            "هذا المسار لا علاقة له بحضور أو انصراف الطلاب.",
+        ],
+    }
+
+
+@router.post("/import/asctt-roz/slots/preview")
+async def preview_asctt_roz_slots(
+    payload: RozSlotPreviewPayload,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    source_path = _safe_import_sample_path(payload.file_path)
+    data = source_path.read_bytes()
+    parsed = parse_asctt_roz_bytes(data, payload.max_records)
+
+    return await _build_roz_slot_preview_plan(
+        db,
+        parsed=parsed,
+        data=data,
+        file_name=source_path.name,
+        file_size=len(data),
+        sha256=hashlib.sha256(data).hexdigest(),
+    )
 
 
 @router.post("/import/time-table-csv")
