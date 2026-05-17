@@ -1472,3 +1472,58 @@ th {
   }
 }
 
+
+/* PHASE 8D SCHOOL CORE OPS UI */
+.school-core-hero {
+  border-color: rgba(31, 111, 120, .28);
+}
+
+.school-core-stats .metric {
+  min-height: 112px;
+}
+
+.school-core-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.school-core-action-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  transition: .2s ease;
+}
+
+.school-core-action-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(31, 111, 120, .45);
+}
+
+.school-core-action-card strong {
+  color: var(--brand-strong);
+}
+
+.school-core-action-card span {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.school-core-inline-list {
+  display: grid;
+  gap: 4px;
+}
+
+.school-core-inline-list span {
+  display: inline-block;
+  width: fit-content;
+  border: 1px solid rgba(31, 111, 120, .18);
+  background: #f8fbfc;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--brand-strong);
+}

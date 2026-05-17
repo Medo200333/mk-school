@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.education_control import router as education_control_router
+from app.api.v1.school_core_operations import router as school_core_operations_router
 from app.api.v1.school_timetable_operational import router as school_timetable_operational_router
 from app.api.v1.platform import router as platform_router
 from app.core.config import settings
@@ -32,5 +33,6 @@ async def health() -> dict[str, str]:
 
 
 app.include_router(platform_router)
+app.include_router(school_core_operations_router)
 app.include_router(education_control_router)
 app.include_router(school_timetable_operational_router)
