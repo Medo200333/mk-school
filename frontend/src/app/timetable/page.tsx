@@ -215,6 +215,11 @@ type RozSlotPreviewResult = {
   parser_stage?: string;
   safe_to_import_slots?: boolean;
   can_execute_import?: boolean;
+  safe_to_confirm?: boolean;
+  can_build_slot_import_plan?: boolean;
+  can_write_school_timetable_slots?: boolean;
+  classtt_direct_slot_source?: boolean;
+  slot_import_decision?: string;
   real_classtt_blocks_count?: number;
   classtt_end_count?: number;
   headers_count?: number;
@@ -227,7 +232,14 @@ type RozSlotPreviewResult = {
     can_write_school_timetable_slots?: boolean;
     reason_ar?: string;
     required_before_db_write?: string[];
+    required_before_any_db_write?: string[];
+    proven_now?: string[];
+    warnings?: string[];
+    decision_ar?: string;
   };
+  layout_vs_slot_proof?: Row;
+  preview_rows?: Row[];
+  classtt_blocks?: Row[];
   real_classtt_blocks?: Row[];
   class_timetable_blocks?: Row[];
   notes_ar?: string[];
@@ -1354,26 +1366,26 @@ async function exportCsv() {
           <h2>استيراد ومعاينة TimeTable</h2>
 
           <div className="alert-ok roz-full-hero">
-            <strong>لوحة استيراد الجدول الكامل من ROZ / ASCTT</strong>
+            <strong>لوحة تحليل ROZ وإثبات CLASSTT Layout فقط</strong>
             <p>
-              هذه اللوحة مخصصة لهدف واحد: قراءة ملف ROZ، استخراج الفصول والمدرسين والمواد، تحليل CLASSTT الحقيقي، ثم عرض خطة خانات الجدول قبل أي كتابة في قاعدة البيانات.
+              هذه اللوحة تقرأ ملف ROZ وتعرض قرارًا آمنًا: CLASSTT ثبت أنه Layout/Print Metadata وليس مصدرًا مباشرًا لخانات timetable_slots.
             </p>
           </div>
 
           <div className="roz-full-dashboard" role="note" aria-label="ROZ full timetable import dashboard">
             <div>
-              <strong>مسار التشغيل الصحيح</strong>
+              <strong>المسار الآمن بعد Phase 8M</strong>
               <p>
-                لن يتم التعامل مع حضور وانصراف الطلبة هنا. الهدف هو تحويل جدول ROZ إلى خطة timetable slots كاملة بعد إثبات الربط deterministic بين الفصل + اليوم + الحصة + المادة + المدرس.
+                لن يتم التعامل مع حضور وانصراف الطلبة هنا. CLASSTT ممنوع كمدخل كتابة مباشر حتى يظهر مصدر آخر يثبت class + day + period + subject + teacher لكل خانة.
               </p>
             </div>
             <ol className="roz-full-pipeline">
               <li>قراءة ملف ROZ من import_samples فقط</li>
               <li>استخراج الفصول والمدرسين والمواد</li>
-              <li>تحليل CLASSTT الحقيقي بعد استبعاد CLASSTT_END</li>
-              <li>بناء Preview لخانات school.timetable_slots المطلوبة</li>
-              <li>عرض unresolved tuple fields و conflict gates</li>
-              <li>التنفيذ الفعلي لاحقًا فقط بعد Confirm منفصل وجودة mapping مثبتة</li>
+              <li>إثبات أن CLASSTT الحقيقي Layout/Print فقط</li>
+              <li>عرض قرار المنع بدل بناء INSERT غير مثبت</li>
+              <li>عرض missing tuple fields المطلوبة قبل أي كتابة</li>
+              <li>التنفيذ الفعلي ممنوع حتى dry-run rows حقيقية ومصدر رسمي أو deterministic</li>
             </ol>
           </div>
 
@@ -1389,7 +1401,7 @@ async function exportCsv() {
               معاينة ملف ROZ
             </button>
             <button className="btn btn-secondary" disabled={busy || !rozFilePath.trim()} onClick={previewRozFullTimetableSlots}>
-              تحليل خطة خانات الجدول الكامل
+              إثبات CLASSTT Layout فقط
             </button>
           </div>
 
@@ -1397,21 +1409,38 @@ async function exportCsv() {
             <div className="roz-slot-preview-panel mt-small">
               <div className="roz-preview-head">
                 <div>
-                  <strong>Preview خطة الجدول الكامل من ROZ</strong>
+                  <strong>Preview قرار CLASSTT Layout فقط</strong>
                   <small>{rozSlotPreview.file_name || "ROZ file"} — لا توجد كتابة في قاعدة البيانات</small>
                 </div>
                 <span className={rozSlotPreview.can_execute_import ? "status-approved" : "status-generation"}>
-                  {rozSlotPreview.can_execute_import ? "جاهز للمراجعة النهائية" : "Mapping Gate"}
+                  {rozSlotPreview.can_execute_import ? "جاهز للمراجعة النهائية" : "Layout Gate"}
                 </span>
               </div>
 
               <div className="roz-preview-metrics">
                 <span>الوضع: {rozSlotPreview.mode || "preview_only"}</span>
                 <span>CLASSTT الحقيقي: {rozSlotPreview.counts?.["real_classtt_blocks"] ?? rozSlotPreview.real_classtt_blocks_count ?? 0}</span>
-                <span>CLASSTT_END: {rozSlotPreview.counts?.["classtt_end"] ?? rozSlotPreview.classtt_end_count ?? 0}</span>
-                <span>Headers: {rozSlotPreview.counts?.["headers"] ?? rozSlotPreview.headers_count ?? 0}</span>
+                <span>classtt_direct_slot_source: {rozSlotPreview.classtt_direct_slot_source ? "true" : "false"}</span>
+                <span>can_build_slot_import_plan: {rozSlotPreview.can_build_slot_import_plan ? "true" : "false"}</span>
+                <span>can_write_school_timetable_slots: {rozSlotPreview.can_write_school_timetable_slots ? "true" : "false"}</span>
+                <span>slot_import_decision: {rozSlotPreview.slot_import_decision || "blocked_classtt_layout_only"}</span>
                 <span>safe_to_import_slots: {rozSlotPreview.safe_to_import_slots ? "true" : "false"}</span>
                 <span>can_execute_import: {rozSlotPreview.can_execute_import ? "true" : "false"}</span>
+              </div>
+
+              <div className="roz-layout-proof-banner" role="note" aria-label="CLASSTT layout proof">
+                <strong>قرار Phase 8M: CLASSTT ليس مصدر خانات</strong>
+                <p>
+                  {rozSlotPreview.decoder_gate?.decision_ar || "لا يتم بناء import لخانات timetable_slots من CLASSTT."}
+                </p>
+                <p>
+                  {rozSlotPreview.decoder_gate?.reason_ar || "CLASSTT يحمل metadata للطباعة/layout ولا يثبت tuple كامل لكل خانة."}
+                </p>
+                <div className="roz-layout-proof-flags">
+                  <span>خانات الجدول: ممنوعة من CLASSTT</span>
+                  <span>source: Layout/Print Metadata</span>
+                  <span>DB write: blocked</span>
+                </div>
               </div>
 
               <div className="roz-slot-preview-grid">
@@ -1448,25 +1477,25 @@ async function exportCsv() {
               </div>
 
               <details className="mt-small" open>
-                <summary>قرار بوابة الاستيراد</summary>
+                <summary>قرار بوابة CLASSTT</summary>
                 <p className="muted">
                   {rozSlotPreview.decoder_gate?.reason_ar || "لم يثبت بعد ربط deterministic لكل خانة بالمادة والمدرس واليوم والحصة، لذلك التنفيذ الفعلي غير مفعل."}
                 </p>
                 <ul className="roz-slot-gate-list">
-                  {((rozSlotPreview.decoder_gate?.required_before_db_write || []) as string[]).map((item) => (
+                  {((rozSlotPreview.decoder_gate?.required_before_db_write || rozSlotPreview.decoder_gate?.required_before_any_db_write || []) as string[]).map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
               </details>
 
               <SmallTable
-                rows={((rozSlotPreview.real_classtt_blocks || rozSlotPreview.class_timetable_blocks || []) as Row[]).slice(0, 8)}
+                rows={((rozSlotPreview.preview_rows || rozSlotPreview.classtt_blocks || rozSlotPreview.real_classtt_blocks || rozSlotPreview.class_timetable_blocks || []) as Row[]).slice(0, 8)}
                 empty="لا توجد بلوكات CLASSTT معروضة"
                 columns={[
                   { key: "block_index", label: "Block" },
-                  { key: "offset", label: "Offset" },
-                  { key: "byte_length", label: "Bytes" },
-                  { key: "mapping_confidence", label: "Mapping" },
+                  { key: "source_header", label: "Header" },
+                  { key: "candidate_day_name_ar", label: "يوم مرشح" },
+                  { key: "action", label: "Gate" },
                 ]}
               />
             </div>
@@ -1498,7 +1527,7 @@ async function exportCsv() {
                 <span>Evidence: {rozPreview.evidence_summary?.format?.family || "غير مفعل"}</span>
                 <span>ثقة Evidence: {typeof rozPreview.evidence_confidence?.percent === "number" ? `${rozPreview.evidence_confidence?.percent}%` : "غير محدد"}</span>
                 <span>استيراد الكيانات: {rozPreview.evidence_safety?.safe_to_import_entities ? "مراجعة مسموحة" : "ممنوع"}</span>
-                <span>خانات الجدول: Preview / Mapping Gate</span>
+                <span>خانات الجدول: ممنوعة من CLASSTT</span>
               </div>
 
               <div className="roz-entity-grid">

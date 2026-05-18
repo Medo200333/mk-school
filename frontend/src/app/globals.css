@@ -1017,6 +1017,51 @@ th {
 }
 
 
+/* PHASE 8N CLASSTT LAYOUT GATE */
+.roz-layout-proof-banner {
+  border: 1px solid rgba(180, 110, 20, 0.24);
+  border-radius: 18px;
+  padding: 14px 16px;
+  margin: 14px 0;
+  background: linear-gradient(135deg, rgba(180, 110, 20, 0.10), rgba(255, 248, 235, 0.76));
+  color: #5a3a20;
+}
+
+.roz-layout-proof-banner strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #4b2f17;
+}
+
+.roz-layout-proof-banner p {
+  margin: 6px 0 0;
+  line-height: 1.8;
+  color: #68420e;
+}
+
+.roz-layout-proof-flags {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.roz-layout-proof-flags span {
+  border: 1px solid rgba(180, 110, 20, 0.18);
+  border-radius: 999px;
+  padding: 8px 11px;
+  background: rgba(255, 255, 255, 0.68);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+@media print {
+  .roz-layout-proof-banner {
+    display: none !important;
+  }
+}
+
+
 /* Phase 6W Weekly Board Print Panel */
 .weekly-board-panel {
   border: 1px solid rgba(92, 60, 30, 0.18);
