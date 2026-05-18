@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/v1/school-timetable", tags=["school-timetable"])
 class TimetableCsvImport(BaseModel):
     batch_name: str = "استيراد TimeTable"
     csv_text: str
+    dry_run: bool = True
 
 
 def rows(result) -> list[dict[str, Any]]:
@@ -2313,6 +2314,122 @@ async def import_time_table_csv(
             status_code=400,
             detail="CSV لازم يحتوي الأعمدة: day,period,class,subject,teacher,room",
         )
+
+    if payload.dry_run:
+        total = 0
+        accepted = 0
+        rejected = 0
+        errors: list[dict[str, Any]] = []
+        preview_rows: list[dict[str, Any]] = []
+
+        would_create_classes: set[str] = set()
+        would_create_teachers: set[str] = set()
+        would_create_rooms: set[str] = set()
+
+        for row in reader:
+            total += 1
+            clean = {str(k).strip().lower(): (v or "").strip() for k, v in row.items()}
+
+            try:
+                day_name = clean["day"]
+                period_raw = clean["period"]
+                class_name = clean["class"]
+                subject = clean["subject"]
+                teacher_name = clean["teacher"]
+                room_name = clean["room"]
+
+                if not day_name:
+                    raise ValueError("اليوم فارغ")
+                if not period_raw:
+                    raise ValueError("رقم الحصة فارغ")
+                if not class_name:
+                    raise ValueError("الفصل فارغ")
+                if not subject:
+                    raise ValueError("المادة فارغة")
+                if not teacher_name:
+                    raise ValueError("المدرس فارغ")
+
+                period_no = int(period_raw)
+
+                day = await db.execute(
+                    text("""
+                    SELECT id
+                    FROM school.week_days
+                    WHERE name_ar = :day OR day_code = lower(:day)
+                    LIMIT 1
+                    """),
+                    {"day": day_name},
+                )
+                day_row = day.first()
+                if day_row is None:
+                    raise ValueError(f"اليوم غير معروف: {day_name}")
+
+                period = await db.execute(
+                    text("SELECT id FROM school.lesson_periods WHERE period_no = :period_no LIMIT 1"),
+                    {"period_no": period_no},
+                )
+                period_row = period.first()
+                if period_row is None:
+                    raise ValueError(f"الحصة غير موجودة: {period_no}")
+
+                # Dry-run فقط: ممنوع get_or_create أو INSERT أو UPDATE أو commit.
+                would_create_classes.add(class_name)
+                would_create_teachers.add(teacher_name)
+                if room_name:
+                    would_create_rooms.add(room_name)
+
+                accepted += 1
+                preview_rows.append(
+                    {
+                        "row_number": total,
+                        "status": "accepted",
+                        "day": day_name,
+                        "period": period_no,
+                        "class": class_name,
+                        "subject": subject,
+                        "teacher": teacher_name,
+                        "room": room_name,
+                        "would_write_slot": True,
+                    }
+                )
+
+            except Exception as exc:
+                rejected += 1
+                errors.append(
+                    {
+                        "row_number": total,
+                        "row_data": clean,
+                        "error_message": str(exc),
+                    }
+                )
+                preview_rows.append(
+                    {
+                        "row_number": total,
+                        "status": "rejected",
+                        "row_data": clean,
+                        "error_message": str(exc),
+                        "would_write_slot": False,
+                    }
+                )
+
+        return {
+            "mode": "dry_run",
+            "dry_run": True,
+            "safe_to_import": rejected == 0 and accepted > 0,
+            "db_write_performed": False,
+            "total_rows": total,
+            "accepted_rows": accepted,
+            "rejected_rows": rejected,
+            "would_create": {
+                "classes": sorted(would_create_classes),
+                "teachers": sorted(would_create_teachers),
+                "rooms": sorted(would_create_rooms),
+            },
+            "preview_rows": preview_rows[:200],
+            "preview_rows_truncated": len(preview_rows) > 200,
+            "errors": errors,
+            "next_required_action": "راجع نتيجة المعاينة أولًا، ثم أرسل dry_run=false فقط عند التأكد من الاستيراد.",
+        }
 
     try:
         batch_result = await db.execute(

@@ -561,10 +561,11 @@ export default function TimetableStudioPage() {
   }
 
   async function importCsv() {
-    return action("استيراد CSV", () =>
+    return action("معاينة CSV", () =>
       apiPost("import/time-table-csv", {
-        batch_name: fileName || "استيراد من Timetable Studio",
+        batch_name: fileName || "معاينة CSV من Timetable Studio",
         csv_text: csv,
+        dry_run: true,
       })
     );
   }
@@ -1665,10 +1666,10 @@ async function exportCsv() {
           </div>
 
           <div className="mt">
-            <h3>استيراد CSV التقليدي</h3>
+            <h3>معاينة CSV التقليدية</h3>
             <input className="input" type="file" accept=".csv,.txt,text/csv" onChange={chooseFile} />
             <textarea className="input csv-area mt-small" value={csv} onChange={(e) => setCsv(e.target.value)} />
-            <button className="btn mt-small" disabled={busy || !csv.trim()} onClick={importCsv}>استيراد CSV</button>
+            <button className="btn mt-small" disabled={busy || !csv.trim()} onClick={importCsv}>معاينة CSV</button>
           </div>
         </div>
       </section>
