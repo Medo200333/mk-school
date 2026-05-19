@@ -2168,9 +2168,92 @@ async def _build_roz_slot_preview_plan(
         .get("canonical_entities", {})
     )
 
+    parser_version = "asctt-roz-preview-contract-v1"
+    parser_trace = {
+        "parser_version": parser_version,
+        "parser_stage": parsed.get("parser_stage"),
+        "source_format": parsed.get("format"),
+        "evidence_stage": "preview_contract_only",
+        "database_impact": "none",
+        "slot_tuple_proven": False,
+        "teacher_subject_period_class_day_tuple_proven": False,
+        "notes_ar": [
+            "هذا trace للمعاينة فقط ولا يثبت tuple صالح للاستيراد.",
+            "لا توجد كتابة في school.timetable_slots.",
+            "ROZ CLASSTT ما زال Layout/Print Metadata وليس مصدر حصص مؤكد.",
+        ],
+    }
+
+    evidence_map = [
+        {
+            "evidence_kind": "classtt_layout_block",
+            "block_index": block.get("block_index"),
+            "source_offset": block.get("offset"),
+            "source_header": (block.get("header") or {}).get("left_ref")
+            or (block.get("header") or {}).get("header_text"),
+            "candidate_day_or_page": (block.get("header") or {}).get("candidate_day_or_page"),
+            "mapping_status": "blocked_layout_only",
+            "confidence": 0.0,
+            "slot_tuple_proven": False,
+            "teacher_subject_period_class_day_tuple_proven": False,
+        }
+        for block in blocks[:80]
+    ]
+
+    mapping_readiness = {
+        "ready": False,
+        "safe_to_confirm": False,
+        "can_execute_import": False,
+        "can_write_school_timetable_slots": False,
+        "required_tuple": [
+            "school_class_id",
+            "week_day_id",
+            "period_id",
+            "subject_name_ar",
+            "teacher_id",
+        ],
+        "proven_tuple_fields": [],
+        "unresolved_tuple_fields": [
+            "school_class_id",
+            "week_day_id",
+            "period_id",
+            "subject_name_ar",
+            "teacher_id",
+            "classroom_id",
+        ],
+        "blocking_reason": "CLASSTT layout-only evidence does not prove class + day + period + subject + teacher.",
+    }
+
+    dry_run_report = {
+        "mode": "blocked_preview_only",
+        "database_impact": "none",
+        "target_table": "school.timetable_slots",
+        "rows_considered": len(preview_rows),
+        "accepted_rows": 0,
+        "rejected_rows": len(preview_rows),
+        "would_insert_rows": 0,
+        "would_update_rows": 0,
+        "would_skip_rows": len(preview_rows),
+        "safe_to_confirm": False,
+        "can_execute_import": False,
+        "errors": [],
+        "warnings": [
+            "No deterministic slot tuple has been proven from ROZ/CLASSTT.",
+            "CSV remains the only tuple-based timetable import writer.",
+        ],
+    }
+
     return {
         "module": "roz-full-timetable-import",
         "mode": "preview_only",
+        "contract_version": "phase7e_preview_contract_v1",
+        "parser_version": parser_version,
+        "parser_trace": parser_trace,
+        "evidence_map": evidence_map,
+        "mapping_readiness": mapping_readiness,
+        "dry_run_report": dry_run_report,
+        "slot_tuple_proven": False,
+        "teacher_subject_period_class_day_tuple_proven": False,
         "database_impact": "none",
         "safe_to_import_slots": False,
         "safe_to_confirm": False,
